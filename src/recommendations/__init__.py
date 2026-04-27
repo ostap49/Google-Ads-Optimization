@@ -2,16 +2,19 @@
 
 from .recommendation import (
     Recommendation,
+    RecommendationBatch,
     RecommendationType,
     RecommendationPriority,
     RecommendationStatus,
 )
-from .recommendation_engine import RecommendationEngine
 
 __all__ = [
     "Recommendation",
+    "RecommendationBatch",
     "RecommendationType",
     "RecommendationPriority",
     "RecommendationStatus",
-    "RecommendationEngine",
 ]
+
+# RecommendationEngine is imported separately to avoid circular imports
+# Use: from src.recommendations.recommendation_engine import RecommendationEngine
