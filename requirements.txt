@@ -1,0 +1,10 @@
+google-ads==24.1.0
+google-auth==2.29.0
+google-auth-oauthlib==1.2.0
+python-dotenv==1.0.1
+rich==13.7.1
+click==8.1.7
+pydantic==2.7.1
+pandas==2.2.2
+pytest==8.2.0
+pytest-mock==3.14.0
