@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  google-ads-optimizer:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config:/app/config
+      - ./changes_log.db:/app/changes_log.db
+    env_file:
+      - .env
+    restart: unless-stopped

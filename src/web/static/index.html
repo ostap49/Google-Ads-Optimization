@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Google Ads Optimizer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<style>
+  .impact-bar { font-family: monospace; letter-spacing: -1px; }
+  .spinner { animation: spin 1s linear infinite; display: inline-block; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .toast { animation: fadeInOut 3.5s ease forwards; }
+  @keyframes fadeInOut {
+    0% { opacity: 0; transform: translateY(20px); }
+    15% { opacity: 1; transform: translateY(0); }
+    75% { opacity: 1; }
+    100% { opacity: 0; transform: translateY(-10px); }
+  }
+  .view { display: none; }
+  .view.active { display: block; }
+  .nav-link { cursor: pointer; }
+  .nav-link.active { background-color: rgba(255,255,255,0.15); }
+  .modal-overlay { background: rgba(0,0,0,0.5); }
+  pre { white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+<!-- Navbar -->
+<nav class="bg-blue-800 text-white shadow-lg">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <i class="fa-brands fa-google text-2xl"></i>
+      <span class="text-xl font-bold">Google Ads Optimizer</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <div id="status-badge" class="flex items-center gap-2 bg-blue-900 rounded-full px-3 py-1 text-sm">
+        <span id="status-dot" class="w-2 h-2 rounded-full bg-gray-400"></span>
+        <span id="status-text">Checking...</span>
+      </div>
+      <button onclick="showView('settings')" class="text-blue-200 hover:text-white transition">
+        <i class="fa-solid fa-gear text-lg"></i>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<div class="flex max-w-7xl mx-auto">
+
+  <!-- Sidebar -->
+  <aside class="w-56 min-h-screen bg-blue-900 text-white pt-6 shrink-0">
+    <nav class="space-y-1 px-2">
+      <a class="nav-link active flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/10 transition" onclick="showView('dashboard')">
+        <i class="fa-solid fa-chart-line w-5 text-center"></i> Dashboard
+      </a>
+      <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/10 transition" onclick="showView('accounts')">
+        <i class="fa-solid fa-building w-5 text-center"></i> Accounts
+      </a>
+      <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/10 transition" onclick="showView('recommendations')">
+        <i class="fa-solid fa-lightbulb w-5 text-center"></i> Recommendations
+        <span id="rec-badge" class="ml-auto bg-orange-500 text-white text-xs rounded-full px-2 py-0.5 hidden">0</span>
+      </a>
+      <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/10 transition" onclick="showView('changelog')">
+        <i class="fa-solid fa-clock-rotate-left w-5 text-center"></i> Change Log
+      </a>
+      <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/10 transition" onclick="showView('settings')">
+        <i class="fa-solid fa-gear w-5 text-center"></i> Settings
+      </a>
+    </nav>
+  </aside>
+
+  <!-- Main content -->
+  <main class="flex-1 p-6 overflow-auto">
+
+    <!-- Dashboard View -->
+    <div id="view-dashboard" class="view active">
+      <h1 class="text-2xl font-bold text-gray-800 mb-6">Dashboard</h1>
+
+      <!-- Stats cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white rounded-xl shadow p-5">
+          <p class="text-sm text-gray-500">Total Accounts</p>
+          <p id="stat-accounts" class="text-3xl font-bold text-blue-700 mt-1">—</p>
+        </div>
+        <div class="bg-white rounded-xl shadow p-5">
+          <p class="text-sm text-gray-500">Recommendations</p>
+          <p id="stat-recs" class="text-3xl font-bold text-orange-600 mt-1">—</p>
+        </div>
+        <div class="bg-white rounded-xl shadow p-5">
+          <p class="text-sm text-gray-500">High Priority</p>
+          <p id="stat-high" class="text-3xl font-bold text-red-600 mt-1">—</p>
+        </div>
+        <div class="bg-white rounded-xl shadow p-5">
+          <p class="text-sm text-gray-500">Applied</p>
+          <p id="stat-applied" class="text-3xl font-bold text-green-600 mt-1">0</p>
+        </div>
+      </div>
+
+      <!-- Accounts table -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="flex items-center justify-between px-6 py-4 border-b">
+          <h2 class="text-lg font-semibold text-gray-700">MCC Accounts</h2>
+          <button id="btn-load-accounts" onclick="loadAccounts()" class="bg-blue-700 hover:bg-blue-800 text-white text-sm px-4 py-2 rounded-lg transition flex items-center gap-2">
+            <i class="fa-solid fa-refresh"></i> Load Accounts
+          </button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-500 uppercase text-xs">
+              <tr>
+                <th class="px-4 py-3 text-left">Account</th>
+                <th class="px-4 py-3 text-right">Impressions</th>
+                <th class="px-4 py-3 text-right">Clicks</th>
+                <th class="px-4 py-3 text-right">Cost</th>
+                <th class="px-4 py-3 text-right">Conv.</th>
+                <th class="px-4 py-3 text-right">ROAS</th>
+                <th class="px-4 py-3 text-right">Recs</th>
+                <th class="px-4 py-3 text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody id="accounts-table-body">
+              <tr><td colspan="8" class="text-center py-10 text-gray-400">
+                <i class="fa-solid fa-circle-info mr-2"></i>Click "Load Accounts" to fetch your MCC data
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Accounts View -->
+    <div id="view-accounts" class="view">
+      <h1 class="text-2xl font-bold text-gray-800 mb-6">Accounts</h1>
+      <div id="accounts-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="bg-white rounded-xl shadow p-6 text-center text-gray-400">
+          <i class="fa-solid fa-building text-4xl mb-3 text-blue-200"></i>
+          <p>Load accounts from the Dashboard first</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recommendations View -->
+    <div id="view-recommendations" class="view">
+      <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">Recommendations</h1>
+        <button onclick="loadAllRecommendations()" class="bg-blue-700 hover:bg-blue-800 text-white text-sm px-4 py-2 rounded-lg transition">
+          <i class="fa-solid fa-refresh mr-1"></i> Refresh
+        </button>
+      </div>
+
+      <!-- Filters -->
+      <div class="bg-white rounded-xl shadow p-4 mb-4 flex flex-wrap gap-2 items-center">
+        <span class="text-sm font-medium text-gray-600 mr-1">Filter:</span>
+        <button onclick="filterRecs('all')" id="filter-all" class="filter-btn active-filter text-xs px-3 py-1 rounded-full bg-gray-800 text-white">All</button>
+        <button onclick="filterRecs('CRITICAL')" id="filter-CRITICAL" class="filter-btn text-xs px-3 py-1 rounded-full bg-gray-100 hover:bg-red-600 hover:text-white transition">Critical</button>
+        <button onclick="filterRecs('HIGH')" id="filter-HIGH" class="filter-btn text-xs px-3 py-1 rounded-full bg-gray-100 hover:bg-orange-500 hover:text-white transition">High</button>
+        <button onclick="filterRecs('MEDIUM')" id="filter-MEDIUM" class="filter-btn text-xs px-3 py-1 rounded-full bg-gray-100 hover:bg-yellow-500 hover:text-white transition">Medium</button>
+        <button onclick="filterRecs('LOW')" id="filter-LOW" class="filter-btn text-xs px-3 py-1 rounded-full bg-gray-100 hover:bg-gray-500 hover:text-white transition">Low</button>
+        <select id="filter-account" onchange="filterRecs()" class="ml-auto text-sm border rounded-lg px-3 py-1 text-gray-600">
+          <option value="all">All Accounts</option>
+        </select>
+      </div>
+
+      <div id="recs-container" class="space-y-3">
+        <div class="bg-white rounded-xl shadow p-8 text-center text-gray-400">
+          <i class="fa-solid fa-lightbulb text-4xl mb-3 text-yellow-200"></i>
+          <p>Analyze accounts to see recommendations</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Change Log View -->
+    <div id="view-changelog" class="view">
+      <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">Change Log</h1>
+        <button onclick="loadChangeLog()" class="bg-blue-700 hover:bg-blue-800 text-white text-sm px-4 py-2 rounded-lg transition">
+          <i class="fa-solid fa-refresh mr-1"></i> Refresh
+        </button>
+      </div>
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-500 uppercase text-xs">
+              <tr>
+                <th class="px-4 py-3 text-left">Time</th>
+                <th class="px-4 py-3 text-left">Account</th>
+                <th class="px-4 py-3 text-left">Type</th>
+                <th class="px-4 py-3 text-left">Action</th>
+                <th class="px-4 py-3 text-right">Before</th>
+                <th class="px-4 py-3 text-right">After</th>
+                <th class="px-4 py-3 text-center">Status</th>
+              </tr>
+            </thead>
+            <tbody id="changelog-body">
+              <tr><td colspan="7" class="text-center py-10 text-gray-400">No changes applied yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings View -->
+    <div id="view-settings" class="view">
+      <h1 class="text-2xl font-bold text-gray-800 mb-6">Settings</h1>
+
+      <div class="bg-white rounded-xl shadow p-6 max-w-2xl">
+        <h2 class="text-lg font-semibold text-gray-700 mb-4">
+          <i class="fa-solid fa-key mr-2 text-blue-600"></i>Google Ads Credentials
+        </h2>
+
+        <p class="text-sm text-gray-500 mb-4">
+          Paste your <code class="bg-gray-100 px-1 rounded">google-ads.yaml</code> configuration below.
+          Get credentials from
+          <a href="https://developers.google.com/google-ads/api/docs/get-started/oauth-cloud-project" target="_blank" class="text-blue-600 hover:underline">Google Ads API</a>.
+        </p>
+
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">google-ads.yaml content</label>
+          <textarea id="yaml-content" rows="10" placeholder="developer_token: YOUR_DEVELOPER_TOKEN&#10;client_id: YOUR_CLIENT_ID&#10;client_secret: YOUR_CLIENT_SECRET&#10;refresh_token: YOUR_REFRESH_TOKEN&#10;login_customer_id: YOUR_MCC_CUSTOMER_ID&#10;use_proto_plus: True"
+            class="w-full font-mono text-sm border border-gray-300 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+        </div>
+
+        <div class="flex gap-3">
+          <button onclick="saveAndConnect()" id="btn-connect" class="bg-blue-700 hover:bg-blue-800 text-white px-5 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2">
+            <i class="fa-solid fa-plug"></i> Save & Connect
+          </button>
+          <button onclick="testConnection()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-5 py-2 rounded-lg text-sm font-medium transition">
+            Test Connection
+          </button>
+        </div>
+
+        <div id="connect-result" class="mt-4 hidden"></div>
+
+        <hr class="my-6 border-gray-200">
+
+        <h3 class="text-md font-semibold text-gray-700 mb-3">Environment Variables (alternative)</h3>
+        <p class="text-sm text-gray-500 mb-3">Set these in your <code class="bg-gray-100 px-1 rounded">.env</code> file or deployment environment:</p>
+        <div class="bg-gray-50 rounded-lg p-4 font-mono text-xs text-gray-600 space-y-1">
+          <div>GOOGLE_ADS_DEVELOPER_TOKEN=<span class="text-blue-600">your_token</span></div>
+          <div>GOOGLE_ADS_CLIENT_ID=<span class="text-blue-600">your_client_id</span></div>
+          <div>GOOGLE_ADS_CLIENT_SECRET=<span class="text-blue-600">your_client_secret</span></div>
+          <div>GOOGLE_ADS_REFRESH_TOKEN=<span class="text-blue-600">your_refresh_token</span></div>
+          <div>GOOGLE_ADS_LOGIN_CUSTOMER_ID=<span class="text-blue-600">your_mcc_id</span></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Detail Modal -->
+<div id="modal" class="fixed inset-0 z-50 modal-overlay flex items-center justify-center hidden" onclick="closeModal(event)">
+  <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+    <div class="flex items-start justify-between p-6 border-b">
+      <h3 id="modal-title" class="text-lg font-bold text-gray-800 pr-4"></h3>
+      <button onclick="document.getElementById('modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 shrink-0">
+        <i class="fa-solid fa-xmark text-xl"></i>
+      </button>
+    </div>
+    <div id="modal-body" class="p-6 space-y-4"></div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" class="fixed bottom-6 right-6 z-50 space-y-2"></div>
+
+<script>
+// ─────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────
+let allRecs = [];
+let accounts = [];
+let appliedCount = 0;
+let currentFilter = 'all';
+
+const PRIORITY_COLORS = {
+  CRITICAL: 'bg-red-600 text-white',
+  HIGH:     'bg-orange-500 text-white',
+  MEDIUM:   'bg-yellow-400 text-gray-900',
+  LOW:      'bg-gray-300 text-gray-700',
+};
+const PRIORITY_BORDER = {
+  CRITICAL: 'border-l-red-600',
+  HIGH:     'border-l-orange-500',
+  MEDIUM:   'border-l-yellow-400',
+  LOW:      'border-l-gray-300',
+};
+const TYPE_ICONS = {
+  KEYWORD_LOW_QUALITY_SCORE: '★',
+  KEYWORD_DUPLICATE:         '⊗',
+  KEYWORD_ADD_NEGATIVE:      '−',
+  KEYWORD_OPPORTUNITY:       '+',
+  BID_INCREASE:              '↑',
+  BID_DECREASE:              '↓',
+  BUDGET_LIMITED:            '!',
+  BUDGET_REALLOCATION:       '⇄',
+  AD_PAUSE_LOW_PERFORMER:    '⏸',
+  AD_ADD_RESPONSIVE:         'R',
+};
+
+// ─────────────────────────────────────────────
+// Navigation
+// ─────────────────────────────────────────────
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  document.querySelectorAll('.nav-link').forEach(l => {
+    if (l.getAttribute('onclick') && l.getAttribute('onclick').includes("'" + name + "'")) {
+      l.classList.add('active');
+    }
+  });
+  if (name === 'changelog') loadChangeLog();
+  if (name === 'recommendations') loadAllRecommendations();
+}
+
+// ─────────────────────────────────────────────
+// API helpers
+// ─────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  return r.json();
+}
+
+// ─────────────────────────────────────────────
+// Status check
+// ─────────────────────────────────────────────
+async function checkStatus() {
+  try {
+    const d = await api('GET', '/api/status');
+    const dot = document.getElementById('status-dot');
+    const txt = document.getElementById('status-text');
+    if (d.connected) {
+      dot.className = 'w-2 h-2 rounded-full bg-green-400';
+      txt.textContent = 'Connected' + (d.mcc_id ? ' · ' + d.mcc_id : '');
+    } else {
+      dot.className = 'w-2 h-2 rounded-full bg-red-400';
+      txt.textContent = 'Not connected';
+    }
+  } catch {
+    document.getElementById('status-text').textContent = 'Offline';
+  }
+}
+
+// ─────────────────────────────────────────────
+// Load accounts
+// ─────────────────────────────────────────────
+async function loadAccounts() {
+  const btn = document.getElementById('btn-load-accounts');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"><i class="fa-solid fa-circle-notch"></i></span> Loading...';
+
+  try {
+    const d = await api('GET', '/api/accounts');
+    if (d.error) { toast(d.error, 'error'); return; }
+    accounts = d.accounts || [];
+    renderAccountsTable(accounts);
+    renderAccountsGrid(accounts);
+    document.getElementById('stat-accounts').textContent = accounts.length;
+    loadAllRecommendations();
+  } catch (e) {
+    toast('Failed to load accounts: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-refresh"></i> Load Accounts';
+  }
+}
+
+function renderAccountsTable(accounts) {
+  const tbody = document.getElementById('accounts-table-body');
+  if (!accounts.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center py-10 text-gray-400">No accounts found</td></tr>';
+    return;
+  }
+  tbody.innerHTML = accounts.map(a => {
+    const roas = a.roas || 0;
+    const roasColor = roas >= 2 ? 'text-green-600 font-bold' : roas >= 1 ? 'text-yellow-600' : 'text-red-500';
+    const recCount = a.recommendation_count || 0;
+    return `
+    <tr class="border-t hover:bg-gray-50 transition">
+      <td class="px-4 py-3">
+        <p class="font-medium text-gray-800">${a.name || '—'}</p>
+        <p class="text-xs text-gray-400">${a.id} · ${a.currency || ''}</p>
+      </td>
+      <td class="px-4 py-3 text-right text-gray-600">${fmt(a.impressions)}</td>
+      <td class="px-4 py-3 text-right text-gray-600">${fmt(a.clicks)}</td>
+      <td class="px-4 py-3 text-right text-gray-600">$${(a.cost||0).toFixed(2)}</td>
+      <td class="px-4 py-3 text-right text-gray-600">${(a.conversions||0).toFixed(1)}</td>
+      <td class="px-4 py-3 text-right ${roasColor}">${roas.toFixed(2)}x</td>
+      <td class="px-4 py-3 text-right">
+        <span id="rec-count-${a.id}" class="${recCount ? 'bg-orange-100 text-orange-700' : 'text-gray-400'} text-xs font-medium px-2 py-0.5 rounded-full">${recCount || '—'}</span>
+      </td>
+      <td class="px-4 py-3 text-center">
+        <button id="analyze-btn-${a.id}" onclick="analyzeAccount('${a.id}', '${(a.name||'').replace(/'/g,'')}')"
+          class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded-lg transition">
+          Analyze
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function renderAccountsGrid(accounts) {
+  const grid = document.getElementById('accounts-grid');
+  if (!accounts.length) return;
+  grid.innerHTML = accounts.map(a => {
+    const roas = a.roas || 0;
+    const roasColor = roas >= 2 ? 'text-green-600' : roas >= 1 ? 'text-yellow-600' : 'text-red-500';
+    return `
+    <div class="bg-white rounded-xl shadow p-5 hover:shadow-md transition">
+      <div class="flex justify-between items-start mb-3">
+        <div>
+          <p class="font-semibold text-gray-800">${a.name || 'Unknown'}</p>
+          <p class="text-xs text-gray-400">${a.id} · ${a.currency || ''}</p>
+        </div>
+        <span class="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">${a.status || 'ENABLED'}</span>
+      </div>
+      <div class="grid grid-cols-2 gap-3 mb-4 text-sm">
+        <div><p class="text-gray-400 text-xs">Cost (30d)</p><p class="font-medium">$${(a.cost||0).toFixed(2)}</p></div>
+        <div><p class="text-gray-400 text-xs">ROAS</p><p class="font-medium ${roasColor}">${roas.toFixed(2)}x</p></div>
+        <div><p class="text-gray-400 text-xs">Clicks</p><p class="font-medium">${fmt(a.clicks)}</p></div>
+        <div><p class="text-gray-400 text-xs">Conv.</p><p class="font-medium">${(a.conversions||0).toFixed(1)}</p></div>
+      </div>
+      <button id="analyze-card-btn-${a.id}" onclick="analyzeAccount('${a.id}', '${(a.name||'').replace(/'/g,'')}')"
+        class="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 rounded-lg transition font-medium">
+        <i class="fa-solid fa-magnifying-glass-chart mr-1"></i> Analyze
+      </button>
+    </div>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────
+// Analyze account
+// ─────────────────────────────────────────────
+async function analyzeAccount(customerId, name) {
+  const btns = [`analyze-btn-${customerId}`, `analyze-card-btn-${customerId}`];
+  btns.forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"><i class="fa-solid fa-circle-notch"></i></span> Analyzing...'; }
+  });
+
+  try {
+    const d = await api('POST', `/api/analyze/${customerId}`);
+    if (d.error) { toast(`Analysis failed: ${d.error}`, 'error'); return; }
+
+    const count = d.recommendation_count || 0;
+    toast(`${name}: ${count} recommendation${count !== 1 ? 's' : ''} found`, 'success');
+
+    // Update rec count in table
+    const countEl = document.getElementById(`rec-count-${customerId}`);
+    if (countEl) {
+      countEl.textContent = count || '—';
+      countEl.className = count ? 'bg-orange-100 text-orange-700 text-xs font-medium px-2 py-0.5 rounded-full' : 'text-gray-400 text-xs font-medium px-2 py-0.5 rounded-full';
+    }
+
+    // Merge into allRecs
+    const newRecs = d.recommendations || [];
+    allRecs = allRecs.filter(r => r.customer_id !== customerId).concat(newRecs);
+    updateRecBadge();
+    renderRecommendations();
+    updateDashboardStats();
+
+    // Add account to filter dropdown
+    updateAccountFilter(customerId, name);
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  } finally {
+    btns.forEach(id => {
+      const btn = document.getElementById(id);
+      if (btn) { btn.disabled = false; btn.innerHTML = id.startsWith('analyze-card') ? '<i class="fa-solid fa-magnifying-glass-chart mr-1"></i> Analyze' : 'Analyze'; }
+    });
+  }
+}
+
+// ─────────────────────────────────────────────
+// Recommendations
+// ─────────────────────────────────────────────
+async function loadAllRecommendations() {
+  const d = await api('GET', '/api/recommendations');
+  allRecs = d.recommendations || [];
+  updateRecBadge();
+  renderRecommendations();
+  updateDashboardStats();
+  // Populate account filter
+  const seen = new Set();
+  allRecs.forEach(r => {
+    if (!seen.has(r.customer_id)) {
+      seen.add(r.customer_id);
+      updateAccountFilter(r.customer_id, r.customer_name || r.customer_id);
+    }
+  });
+}
+
+function updateAccountFilter(id, name) {
+  const sel = document.getElementById('filter-account');
+  if (!document.querySelector(`#filter-account option[value="${id}"]`)) {
+    const opt = document.createElement('option');
+    opt.value = id; opt.textContent = name;
+    sel.appendChild(opt);
+  }
+}
+
+function updateRecBadge() {
+  const pending = allRecs.filter(r => r.status === 'PENDING').length;
+  const badge = document.getElementById('rec-badge');
+  if (pending > 0) {
+    badge.textContent = pending;
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+function updateDashboardStats() {
+  document.getElementById('stat-recs').textContent = allRecs.length;
+  const high = allRecs.filter(r => r.priority === 'CRITICAL' || r.priority === 'HIGH').length;
+  document.getElementById('stat-high').textContent = high;
+  document.getElementById('stat-applied').textContent = appliedCount;
+}
+
+let activeFilterPriority = 'all';
+function filterRecs(priority) {
+  if (priority !== undefined) {
+    activeFilterPriority = priority;
+    document.querySelectorAll('.filter-btn').forEach(b => {
+      b.className = b.className.replace(/bg-gray-800|text-white|bg-red-600|bg-orange-500|bg-yellow-500|bg-gray-500/g, '').trim();
+      b.classList.add('bg-gray-100', 'text-gray-700');
+    });
+    const activeBtn = document.getElementById('filter-' + priority) || document.getElementById('filter-all');
+    if (activeBtn) {
+      activeBtn.classList.remove('bg-gray-100', 'text-gray-700');
+      activeBtn.classList.add('bg-gray-800', 'text-white');
+    }
+  }
+  renderRecommendations();
+}
+
+function renderRecommendations() {
+  const container = document.getElementById('recs-container');
+  const accountFilter = document.getElementById('filter-account').value;
+
+  let filtered = allRecs;
+  if (activeFilterPriority !== 'all') filtered = filtered.filter(r => r.priority === activeFilterPriority);
+  if (accountFilter !== 'all') filtered = filtered.filter(r => r.customer_id === accountFilter);
+
+  if (!filtered.length) {
+    container.innerHTML = `<div class="bg-white rounded-xl shadow p-8 text-center text-gray-400">
+      <i class="fa-solid fa-lightbulb text-4xl mb-3 text-yellow-200"></i>
+      <p>${allRecs.length ? 'No recommendations match this filter' : 'Analyze accounts to see recommendations'}</p>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = filtered.map(rec => {
+    const pColor = PRIORITY_COLORS[rec.priority] || 'bg-gray-200 text-gray-700';
+    const bColor = PRIORITY_BORDER[rec.priority] || 'border-l-gray-300';
+    const icon = TYPE_ICONS[rec.rec_type] || '•';
+    const impact = rec.impact_score || 0;
+    const impactBar = '█'.repeat(Math.round(impact)) + '░'.repeat(10 - Math.round(impact));
+    const isApplied = rec.status === 'APPLIED';
+    const isFailed = rec.status === 'FAILED';
+
+    let costDelta = '';
+    if (rec.estimated_cost_delta != null) {
+      const d = rec.estimated_cost_delta;
+      costDelta = d < 0
+        ? `<span class="text-green-600 font-medium">-$${Math.abs(d).toFixed(2)}</span>`
+        : `<span class="text-red-500 font-medium">+$${d.toFixed(2)}</span>`;
+    }
+
+    let actionBtn = '';
+    if (isApplied) {
+      actionBtn = `<span class="bg-green-100 text-green-700 text-xs font-medium px-3 py-1 rounded-full"><i class="fa-solid fa-check mr-1"></i>Applied</span>`;
+    } else if (isFailed) {
+      actionBtn = `<span class="bg-red-100 text-red-700 text-xs font-medium px-3 py-1 rounded-full"><i class="fa-solid fa-xmark mr-1"></i>Failed</span>`;
+    } else {
+      actionBtn = `<button id="apply-btn-${rec.id}" onclick="applyRec('${rec.id}')"
+        class="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 rounded-lg transition font-medium">
+        <i class="fa-solid fa-check mr-1"></i>Apply
+      </button>`;
+    }
+
+    return `
+    <div id="rec-card-${rec.id}" class="bg-white rounded-xl shadow border-l-4 ${bColor} p-5 hover:shadow-md transition">
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-2 flex-wrap">
+            <span class="text-xs font-bold px-2 py-0.5 rounded-full ${pColor}">${rec.priority}</span>
+            <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-mono">${icon} ${rec.rec_type.replace(/_/g,' ')}</span>
+            ${rec.customer_name ? `<span class="text-xs text-gray-400">${rec.customer_name}</span>` : ''}
+          </div>
+          <p class="font-semibold text-gray-800 mb-1 truncate">${rec.title || ''}</p>
+          <p class="text-sm text-gray-500 line-clamp-2">${(rec.description||'').substring(0,180)}${(rec.description||'').length>180?'...':''}</p>
+          <div class="flex items-center gap-4 mt-3 text-xs text-gray-400">
+            <span class="impact-bar font-mono" title="Impact: ${impact}/10">${impactBar} <span class="font-semibold text-gray-600">${impact.toFixed(1)}</span></span>
+            ${costDelta ? `<span>Est. cost: ${costDelta}</span>` : ''}
+            ${rec.campaign_name ? `<span class="truncate max-w-xs"><i class="fa-solid fa-bullhorn mr-1"></i>${rec.campaign_name}</span>` : ''}
+          </div>
+        </div>
+        <div class="flex flex-col gap-2 items-end shrink-0">
+          ${actionBtn}
+          <button onclick="showDetail('${rec.id}')" class="text-xs text-blue-600 hover:text-blue-800 font-medium">
+            Details <i class="fa-solid fa-arrow-right ml-0.5"></i>
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────
+// Apply recommendation
+// ─────────────────────────────────────────────
+async function applyRec(recId) {
+  const btn = document.getElementById(`apply-btn-${recId}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"><i class="fa-solid fa-circle-notch"></i></span>'; }
+
+  try {
+    const d = await api('POST', `/api/apply/${recId}`);
+    const rec = allRecs.find(r => r.id === recId);
+    if (d.success) {
+      if (rec) rec.status = 'APPLIED';
+      appliedCount++;
+      toast('Recommendation applied successfully!', 'success');
+    } else {
+      if (rec) rec.status = 'FAILED';
+      toast('Failed: ' + (d.error || 'Unknown error'), 'error');
+    }
+    renderRecommendations();
+    updateDashboardStats();
+    updateRecBadge();
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check mr-1"></i>Apply'; }
+  }
+}
+
+// ─────────────────────────────────────────────
+// Detail modal
+// ─────────────────────────────────────────────
+function showDetail(recId) {
+  const rec = allRecs.find(r => r.id === recId);
+  if (!rec) return;
+  document.getElementById('modal-title').textContent = rec.title || 'Recommendation';
+  const pColor = PRIORITY_COLORS[rec.priority] || 'bg-gray-200';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="flex gap-2 flex-wrap">
+      <span class="text-sm font-bold px-3 py-1 rounded-full ${pColor}">${rec.priority}</span>
+      <span class="text-sm bg-gray-100 text-gray-600 px-3 py-1 rounded-full">${rec.rec_type}</span>
+      <span class="text-sm bg-blue-50 text-blue-700 px-3 py-1 rounded-full">Impact: ${(rec.impact_score||0).toFixed(1)}/10</span>
+    </div>
+    <div>
+      <p class="text-sm font-semibold text-gray-700 mb-1">Description</p>
+      <p class="text-sm text-gray-600">${rec.description || '—'}</p>
+    </div>
+    <div>
+      <p class="text-sm font-semibold text-gray-700 mb-1">Rationale</p>
+      <p class="text-sm text-gray-600">${rec.rationale || '—'}</p>
+    </div>
+    ${rec.campaign_name ? `<div class="flex gap-4 text-sm"><span class="text-gray-400">Campaign:</span><span>${rec.campaign_name}</span></div>` : ''}
+    ${rec.ad_group_name ? `<div class="flex gap-4 text-sm"><span class="text-gray-400">Ad Group:</span><span>${rec.ad_group_name}</span></div>` : ''}
+    ${rec.estimated_cost_delta != null ? `<div class="flex gap-4 text-sm"><span class="text-gray-400">Est. cost delta:</span><span class="${rec.estimated_cost_delta < 0 ? 'text-green-600' : 'text-red-500'} font-medium">${rec.estimated_cost_delta < 0 ? '-' : '+'}$${Math.abs(rec.estimated_cost_delta).toFixed(2)}</span></div>` : ''}
+    ${rec.estimated_conversion_delta != null ? `<div class="flex gap-4 text-sm"><span class="text-gray-400">Est. conversions:</span><span class="text-green-600 font-medium">+${rec.estimated_conversion_delta.toFixed(1)}</span></div>` : ''}
+    <div>
+      <p class="text-sm font-semibold text-gray-700 mb-2">Change Data</p>
+      <pre class="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 overflow-auto">${JSON.stringify(rec.change_data || {}, null, 2)}</pre>
+    </div>
+    ${rec.status !== 'APPLIED' && rec.status !== 'FAILED' ? `
+    <button onclick="applyRec('${rec.id}'); closeModal()" class="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-medium transition">
+      <i class="fa-solid fa-check mr-2"></i>Apply This Change
+    </button>` : `<div class="bg-${rec.status === 'APPLIED' ? 'green' : 'red'}-50 text-${rec.status === 'APPLIED' ? 'green' : 'red'}-700 rounded-lg p-3 text-center font-medium">${rec.status}</div>`}
+  `;
+  document.getElementById('modal').classList.remove('hidden');
+}
+
+function closeModal(event) {
+  if (!event || event.target === document.getElementById('modal')) {
+    document.getElementById('modal').classList.add('hidden');
+  }
+}
+
+// ─────────────────────────────────────────────
+// Change log
+// ─────────────────────────────────────────────
+async function loadChangeLog() {
+  const d = await api('GET', '/api/changes-log');
+  const rows = d.entries || [];
+  const tbody = document.getElementById('changelog-body');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-10 text-gray-400">No changes applied yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr class="border-t hover:bg-gray-50 transition text-sm">
+      <td class="px-4 py-3 text-gray-500 whitespace-nowrap">${r.timestamp ? r.timestamp.split('T').join(' ').substring(0,19) : '—'}</td>
+      <td class="px-4 py-3 text-gray-700">${r.account_id || '—'}</td>
+      <td class="px-4 py-3"><span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">${(r.rec_type||'').replace(/_/g,' ')}</span></td>
+      <td class="px-4 py-3 text-gray-600">${r.action || '—'}</td>
+      <td class="px-4 py-3 text-right text-gray-500 font-mono text-xs">${r.before_value || '—'}</td>
+      <td class="px-4 py-3 text-right text-gray-700 font-mono text-xs font-medium">${r.after_value || '—'}</td>
+      <td class="px-4 py-3 text-center">
+        <span class="text-xs font-bold px-2 py-0.5 rounded-full ${r.status === 'SUCCESS' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${r.status}</span>
+      </td>
+    </tr>`).join('');
+}
+
+// ─────────────────────────────────────────────
+// Settings / Connection
+// ─────────────────────────────────────────────
+async function saveAndConnect() {
+  const btn = document.getElementById('btn-connect');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"><i class="fa-solid fa-circle-notch"></i></span> Connecting...';
+
+  const yaml = document.getElementById('yaml-content').value.trim();
+  if (!yaml) { toast('Please enter your google-ads.yaml content', 'error'); btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-plug"></i> Save & Connect'; return; }
+
+  try {
+    // Save first
+    await api('POST', '/api/settings', { yaml_content: yaml });
+    // Then connect
+    const d = await api('POST', '/api/connect', { yaml_content: yaml });
+    const result = document.getElementById('connect-result');
+    result.classList.remove('hidden');
+    if (d.connected) {
+      result.innerHTML = '<div class="bg-green-50 text-green-700 rounded-lg p-3 flex items-center gap-2"><i class="fa-solid fa-circle-check"></i> Connected successfully!</div>';
+      toast('Connected to Google Ads API!', 'success');
+      checkStatus();
+    } else {
+      result.innerHTML = `<div class="bg-red-50 text-red-700 rounded-lg p-3"><i class="fa-solid fa-circle-xmark mr-2"></i>${d.error || 'Connection failed'}</div>`;
+    }
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-plug"></i> Save & Connect';
+  }
+}
+
+async function testConnection() {
+  const yaml = document.getElementById('yaml-content').value.trim();
+  const result = document.getElementById('connect-result');
+  result.classList.remove('hidden');
+  result.innerHTML = '<div class="text-gray-500 text-sm"><span class="spinner"><i class="fa-solid fa-circle-notch mr-2"></i></span>Testing...</div>';
+  try {
+    const d = await api('POST', '/api/connect', yaml ? { yaml_content: yaml } : {});
+    if (d.connected) {
+      result.innerHTML = '<div class="bg-green-50 text-green-700 rounded-lg p-3"><i class="fa-solid fa-circle-check mr-2"></i>Connection successful!</div>';
+      checkStatus();
+    } else {
+      result.innerHTML = `<div class="bg-red-50 text-red-700 rounded-lg p-3"><i class="fa-solid fa-circle-xmark mr-2"></i>${d.error || 'Failed'}</div>`;
+    }
+  } catch (e) {
+    result.innerHTML = `<div class="bg-red-50 text-red-700 rounded-lg p-3">${e.message}</div>`;
+  }
+}
+
+async function loadSettings() {
+  try {
+    const d = await api('GET', '/api/settings');
+    if (d.has_config) {
+      document.getElementById('yaml-content').value = d.yaml_content || '';
+    }
+  } catch {}
+}
+
+// ─────────────────────────────────────────────
+// Toast notifications
+// ─────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const colors = { success: 'bg-green-600', error: 'bg-red-600', info: 'bg-blue-600' };
+  const icons = { success: 'fa-circle-check', error: 'fa-circle-xmark', info: 'fa-circle-info' };
+  const el = document.createElement('div');
+  el.className = `toast ${colors[type]} text-white text-sm px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 max-w-sm`;
+  el.innerHTML = `<i class="fa-solid ${icons[type]}"></i><span>${msg}</span>`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ─────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────
+function fmt(n) {
+  if (!n) return '0';
+  return Number(n).toLocaleString();
+}
+
+// ─────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────
+checkStatus();
+loadSettings();
+</script>
+</body>
+</html>
