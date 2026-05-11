@@ -28,14 +28,43 @@ _state: Dict[str, Any] = {
     "recommendations": {},  # Dict[customer_id, List[Recommendation]]
 }
 
-DB_PATH = os.getenv("CHANGES_LOG_DB", "changes_log.db")
-CONFIG_DIR = Path("config")
+DB_PATH = os.getenv("CHANGES_LOG_DB", "/tmp/changes_log.db")
+CONFIG_DIR = Path(os.getenv("CONFIG_DIR", "/tmp/google-ads-config"))
 
 # ---------------------------------------------------------------------------
 # FastAPI app setup
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Google Ads Optimizer", version="1.0.0")
+
+logging.basicConfig(level=logging.INFO)
+
+
+@app.on_event("startup")
+async def _auto_connect():
+    """Auto-connect using environment variables if present."""
+    required = [
+        "GOOGLE_ADS_DEVELOPER_TOKEN",
+        "GOOGLE_ADS_CLIENT_ID",
+        "GOOGLE_ADS_CLIENT_SECRET",
+        "GOOGLE_ADS_REFRESH_TOKEN",
+        "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+    ]
+    if not all(os.getenv(k) for k in required):
+        logger.info("Env vars not set — skipping auto-connect.")
+        return
+    try:
+        from ..auth.google_ads_auth import GoogleAdsAuthenticator
+        auth = GoogleAdsAuthenticator(use_env=True)
+        if auth.test_connection():
+            _state["client"] = auth.get_client()
+            _state["mcc_id"] = auth.login_customer_id
+            logger.info("Auto-connected to Google Ads MCC %s", _state["mcc_id"])
+        else:
+            logger.warning("Auto-connect: test_connection() returned False")
+    except Exception as exc:
+        logger.warning("Auto-connect failed (app still starts): %s", exc)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -127,6 +156,11 @@ def _mask_value(value: str) -> str:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+
+@app.get("/healthz")
+async def health():
+    return {"status": "ok"}
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -17,7 +17,5 @@ services:
         sync: false
       - key: CHANGES_LOG_DB
         value: /tmp/changes_log.db
-    disk:
-      name: config
-      mountPath: /opt/render/project/src/config
-      sizeGB: 1
+      - key: CONFIG_DIR
+        value: /tmp/google-ads-config
