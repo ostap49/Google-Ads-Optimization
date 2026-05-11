@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: google-ads-optimizer
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.web.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_ADS_DEVELOPER_TOKEN
+        sync: false
+      - key: GOOGLE_ADS_CLIENT_ID
+        sync: false
+      - key: GOOGLE_ADS_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_ADS_REFRESH_TOKEN
+        sync: false
+      - key: GOOGLE_ADS_LOGIN_CUSTOMER_ID
+        sync: false
+      - key: CHANGES_LOG_DB
+        value: /tmp/changes_log.db
+    disk:
+      name: config
+      mountPath: /opt/render/project/src/config
+      sizeGB: 1
