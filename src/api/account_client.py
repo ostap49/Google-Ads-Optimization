@@ -37,7 +37,7 @@ class AccountClient:
             metrics.search_rank_lost_impression_share
         FROM campaign
         WHERE
-            campaign.status != 'REMOVED'
+            campaign.status = 'ENABLED'
             AND segments.date DURING LAST_30_DAYS
     """
 
@@ -46,7 +46,7 @@ class AccountClient:
             ad_group.id,
             ad_group.name,
             ad_group.status,
-            ad_group.campaign_id,
+            campaign.id,
             ad_group.type,
             ad_group.cpc_bid_micros,
             ad_group.target_cpa_micros,
@@ -59,7 +59,8 @@ class AccountClient:
             metrics.average_cpc
         FROM ad_group
         WHERE
-            ad_group.status != 'REMOVED'
+            ad_group.status = 'ENABLED'
+            AND campaign.status = 'ENABLED'
             AND segments.date DURING LAST_30_DAYS
     """
 
@@ -144,7 +145,7 @@ class AccountClient:
                             "id": str(ag.id),
                             "name": ag.name,
                             "status": ag.status.name,
-                            "campaign_id": str(ag.campaign_id),
+                            "campaign_id": str(row.campaign.id),
                             "type": ag.type_.name,
                             "cpc_bid": ag.cpc_bid_micros / 1_000_000
                             if ag.cpc_bid_micros

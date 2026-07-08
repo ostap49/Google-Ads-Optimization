@@ -40,6 +40,8 @@ class CampaignClient:
         FROM keyword_view
         WHERE
             ad_group_criterion.status != 'REMOVED'
+            AND campaign.status = 'ENABLED'
+            AND ad_group.status = 'ENABLED'
             AND segments.date DURING LAST_30_DAYS
     """
 
@@ -68,6 +70,8 @@ class CampaignClient:
         FROM ad_group_ad
         WHERE
             ad_group_ad.status != 'REMOVED'
+            AND campaign.status = 'ENABLED'
+            AND ad_group.status = 'ENABLED'
             AND segments.date DURING LAST_30_DAYS
     """
 
@@ -88,7 +92,9 @@ class CampaignClient:
             metrics.average_cpc
         FROM search_term_view
         WHERE
-            segments.date DURING LAST_30_DAYS
+            campaign.status = 'ENABLED'
+            AND ad_group.status = 'ENABLED'
+            AND segments.date DURING LAST_30_DAYS
             AND metrics.clicks > 0
     """
 
