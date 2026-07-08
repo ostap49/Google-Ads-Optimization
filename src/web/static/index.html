@@ -110,11 +110,11 @@
             <thead class="bg-gray-50 text-gray-500 uppercase text-xs">
               <tr>
                 <th class="px-4 py-3 text-left">Account</th>
-                <th class="px-4 py-3 text-right">Impressions</th>
-                <th class="px-4 py-3 text-right">Clicks</th>
-                <th class="px-4 py-3 text-right">Cost</th>
-                <th class="px-4 py-3 text-right">Conv.</th>
-                <th class="px-4 py-3 text-right">ROAS</th>
+                <th class="px-4 py-3 text-right cursor-pointer hover:bg-gray-100 select-none" onclick="sortBy('impressions')">Impressions <span id="sort-impressions"></span></th>
+                <th class="px-4 py-3 text-right cursor-pointer hover:bg-gray-100 select-none" onclick="sortBy('clicks')">Clicks <span id="sort-clicks"></span></th>
+                <th class="px-4 py-3 text-right cursor-pointer hover:bg-gray-100 select-none" onclick="sortBy('cost')">Cost <span id="sort-cost">▼</span></th>
+                <th class="px-4 py-3 text-right cursor-pointer hover:bg-gray-100 select-none" onclick="sortBy('conversions')">Conv. <span id="sort-conversions"></span></th>
+                <th class="px-4 py-3 text-right cursor-pointer hover:bg-gray-100 select-none" onclick="sortBy('roas')">ROAS <span id="sort-roas"></span></th>
                 <th class="px-4 py-3 text-right">Recs</th>
                 <th class="px-4 py-3 text-center">Action</th>
               </tr>
@@ -273,6 +273,8 @@ let allRecs = [];
 let accounts = [];
 let appliedCount = 0;
 let currentFilter = 'all';
+let sortKey = 'cost';
+let sortDir = -1;
 
 const PRIORITY_COLORS = {
   CRITICAL: 'bg-red-600 text-white',
@@ -387,7 +389,7 @@ function renderAccountsTable(accounts) {
       </td>
       <td class="px-4 py-3 text-right text-gray-600">${fmt(a.impressions)}</td>
       <td class="px-4 py-3 text-right text-gray-600">${fmt(a.clicks)}</td>
-      <td class="px-4 py-3 text-right text-gray-600">$${(a.cost||0).toFixed(2)}</td>
+      <td class="px-4 py-3 text-right text-gray-600">${formatCost(a.cost, a.currency)}</td>
       <td class="px-4 py-3 text-right text-gray-600">${(a.conversions||0).toFixed(1)}</td>
       <td class="px-4 py-3 text-right ${roasColor}">${roas.toFixed(2)}x</td>
       <td class="px-4 py-3 text-right">
@@ -419,7 +421,7 @@ function renderAccountsGrid(accounts) {
         <span class="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">${a.status || 'ENABLED'}</span>
       </div>
       <div class="grid grid-cols-2 gap-3 mb-4 text-sm">
-        <div><p class="text-gray-400 text-xs">Cost (30d)</p><p class="font-medium">$${(a.cost||0).toFixed(2)}</p></div>
+        <div><p class="text-gray-400 text-xs">Cost (30d)</p><p class="font-medium">${formatCost(a.cost, a.currency)}</p></div>
         <div><p class="text-gray-400 text-xs">ROAS</p><p class="font-medium ${roasColor}">${roas.toFixed(2)}x</p></div>
         <div><p class="text-gray-400 text-xs">Clicks</p><p class="font-medium">${fmt(a.clicks)}</p></div>
         <div><p class="text-gray-400 text-xs">Conv.</p><p class="font-medium">${(a.conversions||0).toFixed(1)}</p></div>
@@ -563,12 +565,13 @@ function renderRecommendations() {
     const isApplied = rec.status === 'APPLIED';
     const isFailed = rec.status === 'FAILED';
 
+    const recCurrency = getAccountCurrency(rec.customer_id);
     let costDelta = '';
     if (rec.estimated_cost_delta != null) {
       const d = rec.estimated_cost_delta;
       costDelta = d < 0
-        ? `<span class="text-green-600 font-medium">-$${Math.abs(d).toFixed(2)}</span>`
-        : `<span class="text-red-500 font-medium">+$${d.toFixed(2)}</span>`;
+        ? `<span class="text-green-600 font-medium">-${formatCost(Math.abs(d), recCurrency)}</span>`
+        : `<span class="text-red-500 font-medium">+${formatCost(d, recCurrency)}</span>`;
     }
 
     let actionBtn = '';
@@ -662,7 +665,7 @@ function showDetail(recId) {
     </div>
     ${rec.campaign_name ? `<div class="flex gap-4 text-sm"><span class="text-gray-400">Campaign:</span><span>${rec.campaign_name}</span></div>` : ''}
     ${rec.ad_group_name ? `<div class="flex gap-4 text-sm"><span class="text-gray-400">Ad Group:</span><span>${rec.ad_group_name}</span></div>` : ''}
-    ${rec.estimated_cost_delta != null ? `<div class="flex gap-4 text-sm"><span class="text-gray-400">Est. cost delta:</span><span class="${rec.estimated_cost_delta < 0 ? 'text-green-600' : 'text-red-500'} font-medium">${rec.estimated_cost_delta < 0 ? '-' : '+'}$${Math.abs(rec.estimated_cost_delta).toFixed(2)}</span></div>` : ''}
+    ${rec.estimated_cost_delta != null ? `<div class="flex gap-4 text-sm"><span class="text-gray-400">Est. cost delta:</span><span class="${rec.estimated_cost_delta < 0 ? 'text-green-600' : 'text-red-500'} font-medium">${rec.estimated_cost_delta < 0 ? '-' : '+'}${formatCost(Math.abs(rec.estimated_cost_delta), getAccountCurrency(rec.customer_id))}</span></div>` : ''}
     ${rec.estimated_conversion_delta != null ? `<div class="flex gap-4 text-sm"><span class="text-gray-400">Est. conversions:</span><span class="text-green-600 font-medium">+${rec.estimated_conversion_delta.toFixed(1)}</span></div>` : ''}
     <div>
       <p class="text-sm font-semibold text-gray-700 mb-2">Change Data</p>
@@ -786,6 +789,31 @@ function toast(msg, type = 'info') {
 function fmt(n) {
   if (!n) return '0';
   return Number(n).toLocaleString();
+}
+
+function currencySymbol(code) {
+  const map = { USD: '$', EUR: '€', GBP: '£', UAH: '₴', PLN: 'zł', CAD: 'CA$', AUD: 'A$', CZK: 'Kč', HUF: 'Ft', CHF: 'Fr' };
+  return map[code] || (code ? code + ' ' : '$');
+}
+
+function formatCost(amount, currency) {
+  return currencySymbol(currency) + (amount || 0).toFixed(2);
+}
+
+function getAccountCurrency(customerId) {
+  const acc = accounts.find(a => a.id === customerId);
+  return acc ? acc.currency : 'USD';
+}
+
+function sortBy(key) {
+  if (sortKey === key) sortDir *= -1;
+  else { sortKey = key; sortDir = -1; }
+  ['impressions', 'clicks', 'cost', 'conversions', 'roas'].forEach(k => {
+    const el = document.getElementById('sort-' + k);
+    if (el) el.textContent = k === key ? (sortDir === -1 ? ' ▼' : ' ▲') : '';
+  });
+  const sorted = [...accounts].sort((a, b) => ((a[key] || 0) - (b[key] || 0)) * sortDir);
+  renderAccountsTable(sorted);
 }
 
 // ─────────────────────────────────────────────

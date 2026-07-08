@@ -83,7 +83,7 @@ class MCCClient:
         enriched = []
 
         for account in accounts:
-            if account["is_manager"] or account["is_test"]:
+            if account["is_manager"]:
                 continue
             perf = self._fetch_account_performance(account["id"], date_range)
             merged = {**account, **perf}
