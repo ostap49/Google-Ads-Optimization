@@ -110,7 +110,7 @@ class BudgetApplier(BaseApplier):
         budget.amount_micros = int(new_amount_dollars * 1_000_000)
 
         operation = self.client.get_type("CampaignBudgetOperation")
-        operation.update.CopyFrom(budget)
+        operation.update = budget
         operation.update_mask.paths.append("amount_micros")
 
         try:

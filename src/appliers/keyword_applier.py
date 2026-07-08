@@ -78,7 +78,7 @@ class KeywordApplier(BaseApplier):
         criterion.status = self.client.enums.AdGroupCriterionStatusEnum.PAUSED
 
         operation = self.client.get_type("AdGroupCriterionOperation")
-        operation.update.CopyFrom(criterion)
+        operation.update = criterion
         operation.update_mask.paths.append("status")
 
         try:
@@ -140,7 +140,7 @@ class KeywordApplier(BaseApplier):
         criterion.keyword.match_type = match_type_enum
 
         operation = self.client.get_type("AdGroupCriterionOperation")
-        operation.create.CopyFrom(criterion)
+        operation.create = criterion
 
         try:
             response = service.mutate_ad_group_criteria(
@@ -181,7 +181,7 @@ class KeywordApplier(BaseApplier):
         criterion.keyword.match_type = match_type_enum
 
         operation = self.client.get_type("CampaignCriterionOperation")
-        operation.create.CopyFrom(criterion)
+        operation.create = criterion
 
         try:
             response = service.mutate_campaign_criteria(
@@ -222,7 +222,7 @@ class KeywordApplier(BaseApplier):
         criterion.keyword.match_type = match_type_enum
 
         operation = self.client.get_type("AdGroupCriterionOperation")
-        operation.create.CopyFrom(criterion)
+        operation.create = criterion
 
         try:
             response = service.mutate_ad_group_criteria(

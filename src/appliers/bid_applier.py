@@ -80,7 +80,7 @@ class BidApplier(BaseApplier):
         criterion.cpc_bid_micros = int(new_bid_dollars * 1_000_000)
 
         operation = self.client.get_type("AdGroupCriterionOperation")
-        operation.update.CopyFrom(criterion)
+        operation.update = criterion
         operation.update_mask.paths.append("cpc_bid_micros")
 
         try:

@@ -68,7 +68,7 @@ class AdApplier(BaseApplier):
         ad_group_ad.status = self.client.enums.AdGroupAdStatusEnum.PAUSED
 
         operation = self.client.get_type("AdGroupAdOperation")
-        operation.update.CopyFrom(ad_group_ad)
+        operation.update = ad_group_ad
         operation.update_mask.paths.append("status")
 
         try:
