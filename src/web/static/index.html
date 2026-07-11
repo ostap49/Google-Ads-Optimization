@@ -395,15 +395,10 @@ function renderAccountsTable(accounts) {
       <td class="px-4 py-3 text-right">
         <span id="rec-count-${a.id}" class="${recCount ? 'bg-orange-100 text-orange-700' : 'text-gray-400'} text-xs font-medium px-2 py-0.5 rounded-full">${recCount || '—'}</span>
       </td>
-      <td class="px-4 py-3 text-center whitespace-nowrap">
+      <td class="px-4 py-3 text-center">
         <button id="analyze-btn-${a.id}" onclick="analyzeAccount('${a.id}', '${(a.name||'').replace(/'/g,'')}')"
           class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded-lg transition">
           Analyze
-        </button>
-        <button id="autoneg-btn-${a.id}" onclick="autoNegatives('${a.id}', '${(a.name||'').replace(/'/g,'')}')"
-          title="Auto-apply negative keywords from search terms report"
-          class="bg-orange-500 hover:bg-orange-600 text-white text-xs px-2 py-1 rounded-lg transition ml-1">
-          −KW
         </button>
       </td>
     </tr>`;
@@ -479,37 +474,6 @@ async function analyzeAccount(customerId, name) {
       const btn = document.getElementById(id);
       if (btn) { btn.disabled = false; btn.innerHTML = id.startsWith('analyze-card') ? '<i class="fa-solid fa-magnifying-glass-chart mr-1"></i> Analyze' : 'Analyze'; }
     });
-  }
-}
-
-// ─────────────────────────────────────────────
-// Auto-apply negative keywords
-// ─────────────────────────────────────────────
-async function autoNegatives(customerId, name) {
-  const btn = document.getElementById(`autoneg-btn-${customerId}`);
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"><i class="fa-solid fa-circle-notch"></i></span>'; }
-
-  try {
-    // Dry run first to preview candidates
-    const preview = await api('POST', `/api/auto-apply-negatives/${customerId}?dry_run=true`);
-    if (preview.error) { toast(`${name}: ${preview.error}`, 'error'); return; }
-
-    const count = preview.candidate_count || 0;
-    if (!count) { toast(`${name}: no wasted-spend search terms found`, 'info'); return; }
-
-    const terms = (preview.candidates || []).slice(0, 10)
-      .map(c => `• "${c.change_data.search_term}" ($${(c.change_data.cost||0).toFixed(2)})`).join('\n');
-    if (!confirm(`${name}: apply ${count} negative keyword${count !== 1 ? 's' : ''}?\n\n${terms}${count > 10 ? '\n…' : ''}`)) return;
-
-    const d = await api('POST', `/api/auto-apply-negatives/${customerId}`);
-    if (d.error) { toast(`${name}: ${d.error}`, 'error'); return; }
-    appliedCount += d.applied_count || 0;
-    toast(`${name}: ${d.applied_count} negatives applied${d.failed_count ? ', ' + d.failed_count + ' failed' : ''}`, d.failed_count ? 'error' : 'success');
-    loadAllRecommendations();
-  } catch (e) {
-    toast('Error: ' + e.message, 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = '−KW'; }
   }
 }
 
