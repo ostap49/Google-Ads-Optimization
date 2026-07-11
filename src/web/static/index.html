@@ -177,28 +177,26 @@
     <div id="view-audits" class="view">
       <h1 class="text-2xl font-bold text-gray-800 mb-6">Audits</h1>
 
-      <div class="bg-white rounded-xl shadow p-6 mb-6">
-        <h2 class="text-lg font-semibold text-gray-700 mb-2">
-          <i class="fa-solid fa-wand-magic-sparkles mr-2 text-purple-600"></i>PMax Asset Automation Audit
-        </h2>
-        <p class="text-sm text-gray-500 mb-4">
-          Checks all enabled Performance Max campaigns for Google's five auto-asset settings
-          (auto text, URL expansion, auto videos, image cropping, image extraction).
-          Standard: all five <b>opted out</b>. Read-only — nothing is changed.
-        </p>
-        <div class="flex flex-wrap gap-3 items-center">
-          <select id="audit-account" class="text-sm border rounded-lg px-3 py-2 text-gray-600">
-            <option value="">All accounts</option>
-          </select>
-          <button id="btn-pmax-audit" onclick="runPmaxAudit()"
-            class="bg-purple-600 hover:bg-purple-700 text-white text-sm px-4 py-2 rounded-lg transition flex items-center gap-2">
-            <i class="fa-solid fa-play"></i> Run Audit
-          </button>
-          <span id="audit-progress" class="text-sm text-gray-400"></span>
-        </div>
+      <div class="bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap gap-3 items-center">
+        <span class="text-sm font-medium text-gray-600">Scope:</span>
+        <select id="audit-account" class="text-sm border rounded-lg px-3 py-2 text-gray-600">
+          <option value="">All accounts</option>
+        </select>
+        <span class="text-sm font-medium text-gray-600 ml-2">Period:</span>
+        <select id="audit-days" class="text-sm border rounded-lg px-3 py-2 text-gray-600">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="60">Last 60 days</option>
+          <option value="90">Last 90 days</option>
+        </select>
+        <span class="text-xs text-gray-400 ml-auto">All audits are read-only — nothing is changed in your accounts</span>
       </div>
 
-      <div id="audit-results" class="space-y-4"></div>
+      <div id="audit-cards" class="space-y-4">
+        <div class="bg-white rounded-xl shadow p-8 text-center text-gray-400">
+          <span class="spinner"><i class="fa-solid fa-circle-notch mr-2"></i></span>Loading audit catalog...
+        </div>
+      </div>
     </div>
 
     <!-- Change Log View -->
@@ -346,7 +344,7 @@ function showView(name) {
   });
   if (name === 'changelog') loadChangeLog();
   if (name === 'recommendations') loadAllRecommendations();
-  if (name === 'audits') populateAuditAccounts();
+  if (name === 'audits') { populateAuditAccounts(); loadAuditCatalog(); }
 }
 
 // ─────────────────────────────────────────────
@@ -731,106 +729,143 @@ function populateAuditAccounts() {
   });
 }
 
-async function runPmaxAudit() {
-  const btn = document.getElementById('btn-pmax-audit');
-  const progress = document.getElementById('audit-progress');
-  const container = document.getElementById('audit-results');
-  const accId = document.getElementById('audit-account').value;
+let auditCatalog = [];
 
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"><i class="fa-solid fa-circle-notch"></i></span> Auditing...';
-  progress.textContent = accId ? 'Auditing 1 account...' : 'Auditing all accounts — this can take a minute...';
-  container.innerHTML = '';
-
+async function loadAuditCatalog() {
+  if (auditCatalog.length) return;
   try {
-    const path = '/api/audit/pmax-assets' + (accId ? `?customer_id=${accId}` : '');
-    const d = await api('POST', path);
-    if (d.error || d.detail) { toast(d.error || d.detail, 'error'); return; }
-    progress.textContent = '';
-    renderPmaxAudit(d);
+    const d = await api('GET', '/api/audits');
+    auditCatalog = d.audits || [];
+    renderAuditCards();
   } catch (e) {
-    toast('Audit failed: ' + e.message, 'error');
-    progress.textContent = '';
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-play"></i> Run Audit';
+    document.getElementById('audit-cards').innerHTML =
+      `<div class="bg-white rounded-xl shadow p-8 text-center text-red-400">Failed to load audits: ${e.message}</div>`;
   }
 }
 
-function renderPmaxAudit(d) {
-  const container = document.getElementById('audit-results');
-  const labels = d.setting_labels || {};
-  const types = Object.keys(labels);
+const AUDIT_ICONS = {
+  'pmax-assets': 'fa-wand-magic-sparkles text-purple-600',
+  'dgen-automation': 'fa-robot text-purple-500',
+  'non-serving-keywords': 'fa-ghost text-gray-500',
+  'conversion-health': 'fa-heart-pulse text-red-500',
+  'search-term-waste': 'fa-fire text-orange-500',
+  'change-history': 'fa-clock-rotate-left text-blue-500',
+  'mcc-links': 'fa-shield-halved text-green-600',
+};
+
+function renderAuditCards() {
+  document.getElementById('audit-cards').innerHTML = auditCatalog.map(a => `
+    <div class="bg-white rounded-xl shadow">
+      <div class="p-5 flex items-start justify-between gap-4 flex-wrap">
+        <div class="flex-1 min-w-64">
+          <h2 class="text-md font-semibold text-gray-700">
+            <i class="fa-solid ${AUDIT_ICONS[a.key] || 'fa-clipboard-check text-gray-500'} mr-2"></i>${a.label}
+            ${a.uses_dates ? '<span class="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full ml-2"><i class="fa-solid fa-calendar mr-1"></i>uses period</span>' : ''}
+          </h2>
+          <p class="text-sm text-gray-500 mt-1">${a.description}</p>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+          <span id="audit-status-${a.key}" class="text-sm text-gray-400"></span>
+          <button id="audit-btn-${a.key}" onclick="runAudit('${a.key}')"
+            class="bg-blue-700 hover:bg-blue-800 text-white text-sm px-4 py-2 rounded-lg transition flex items-center gap-2">
+            <i class="fa-solid fa-play"></i> Run
+          </button>
+        </div>
+      </div>
+      <div id="audit-result-${a.key}" class="hidden border-t"></div>
+    </div>`).join('');
+}
+
+async function runAudit(key) {
+  const btn = document.getElementById(`audit-btn-${key}`);
+  const status = document.getElementById(`audit-status-${key}`);
+  const box = document.getElementById(`audit-result-${key}`);
+  const accId = document.getElementById('audit-account').value;
+  const days = document.getElementById('audit-days').value;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"><i class="fa-solid fa-circle-notch"></i></span>';
+  status.textContent = accId ? 'Running on 1 account...' : 'Running on all accounts — may take a minute...';
+  box.classList.add('hidden');
+
+  try {
+    const params = new URLSearchParams();
+    if (accId) params.set('customer_id', accId);
+    params.set('days', days);
+    const d = await api('POST', `/api/audit/${key}?${params}`);
+    if (d.error || d.detail) { toast(d.error || d.detail, 'error'); status.textContent = ''; return; }
+    status.textContent = '';
+    renderAuditResult(key, d);
+  } catch (e) {
+    toast('Audit failed: ' + e.message, 'error');
+    status.textContent = '';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-play"></i> Run';
+  }
+}
+
+function auditCell(value) {
+  const v = String(value ?? '');
+  if (v.startsWith('⚠')) return `<span class="text-red-500 font-medium">${v}</span>`;
+  if (v.startsWith('✓')) return `<span class="text-green-600">${v}</span>`;
+  return v;
+}
+
+function renderAuditResult(key, d) {
+  const box = document.getElementById(`audit-result-${key}`);
+  const cols = d.columns || [];
 
   const summary = `
-    <div class="bg-white rounded-xl shadow p-5 flex flex-wrap gap-6 text-sm">
-      <div><p class="text-gray-400 text-xs">Accounts audited</p><p class="text-xl font-bold text-gray-700">${d.accounts_audited}</p></div>
-      <div><p class="text-gray-400 text-xs">With PMax</p><p class="text-xl font-bold text-blue-700">${d.accounts_with_pmax}</p></div>
-      <div><p class="text-gray-400 text-xs">PMax campaigns</p><p class="text-xl font-bold text-gray-700">${d.total_campaigns}</p></div>
-      <div><p class="text-gray-400 text-xs">Non-compliant</p><p class="text-xl font-bold ${d.non_compliant_campaigns ? 'text-red-600' : 'text-green-600'}">${d.non_compliant_campaigns}</p></div>
-      ${d.errors ? `<div><p class="text-gray-400 text-xs">Errors</p><p class="text-xl font-bold text-orange-500">${d.errors}</p></div>` : ''}
+    <div class="px-5 py-3 bg-gray-50 flex flex-wrap gap-6 text-sm items-center">
+      <div><span class="text-gray-400 text-xs">Accounts:</span> <b>${d.accounts_audited}</b></div>
+      <div><span class="text-gray-400 text-xs">With findings:</span> <b>${d.accounts_with_findings}</b></div>
+      <div><span class="text-gray-400 text-xs">Rows:</span> <b>${d.total_rows}</b></div>
+      <div><span class="text-gray-400 text-xs">Flagged:</span> <b class="${d.total_flagged ? 'text-red-600' : 'text-green-600'}">${d.total_flagged}</b></div>
+      ${d.errors ? `<div><span class="text-gray-400 text-xs">Errors:</span> <b class="text-orange-500">${d.errors}</b></div>` : ''}
+      <span class="text-xs text-gray-400 ml-auto">Period: last ${d.days} days</span>
     </div>`;
 
   if (!d.results.length) {
-    container.innerHTML = summary + `
-      <div class="bg-white rounded-xl shadow p-8 text-center text-gray-400">
-        <i class="fa-solid fa-circle-check text-4xl mb-3 text-green-200"></i>
-        <p>No enabled PMax campaigns found in the audited account(s)</p>
+    box.innerHTML = summary + `
+      <div class="p-6 text-center text-gray-400 text-sm">
+        <i class="fa-solid fa-circle-check text-2xl mb-2 text-green-200 block"></i>
+        No findings — everything clean for this audit
       </div>`;
+    box.classList.remove('hidden');
     return;
   }
 
-  const header = types.map(t =>
-    `<th class="px-2 py-2 text-center" title="${labels[t]}">${labels[t].split(' ')[0]}<br><span class="normal-case font-normal">${labels[t].split(' ').slice(1).join(' ')}</span></th>`
-  ).join('');
+  const header = cols.map(c => `<th class="px-3 py-2 text-left">${c.label}</th>`).join('');
 
-  container.innerHTML = summary + d.results.map(acc => {
-    const rows = acc.campaigns.map(c => {
-      const cells = types.map(t => {
-        const st = c.settings[t];
-        const ok = st === 'OPTED_OUT';
-        return `<td class="px-2 py-2 text-center">
-          <span class="${ok ? 'text-green-600' : 'text-red-500 font-bold'}" title="${st}">
-            ${ok ? '<i class="fa-solid fa-circle-check"></i>' : '<i class="fa-solid fa-triangle-exclamation"></i> ON'}
-          </span></td>`;
-      }).join('');
-      return `
-        <tr class="border-t ${c.compliant ? '' : 'bg-red-50/50'}">
-          <td class="px-3 py-2">
-            <p class="font-medium text-gray-800 text-sm">${c.campaign_name}</p>
-            <p class="text-xs text-gray-400">${c.campaign_id}</p>
-          </td>
-          ${cells}
-          <td class="px-3 py-2 text-center">
-            ${c.compliant
-              ? '<span class="bg-green-100 text-green-700 text-xs font-medium px-2 py-0.5 rounded-full">OK</span>'
-              : `<span class="bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5 rounded-full">${c.flagged.length} ON</span>`}
-          </td>
-        </tr>`;
-    }).join('');
-
-    const bad = acc.campaigns.filter(c => !c.compliant).length;
+  box.innerHTML = summary + d.results.map(acc => {
+    const rows = acc.rows.map(r => `
+      <tr class="border-t ${r._flag ? 'bg-red-50/50' : ''}">
+        ${cols.map(c => `<td class="px-3 py-2 text-sm">${auditCell(r[c.key])}</td>`).join('')}
+      </tr>`).join('');
+    const truncated = acc.total_rows > acc.rows.length
+      ? `<p class="px-4 py-2 text-xs text-gray-400">Showing ${acc.rows.length} of ${acc.total_rows} rows</p>` : '';
     return `
-    <div class="bg-white rounded-xl shadow overflow-hidden">
-      <div class="px-5 py-3 border-b flex items-center justify-between">
+    <div class="border-t">
+      <div class="px-5 py-3 flex items-center justify-between bg-white">
         <div>
           <span class="font-semibold text-gray-700">${acc.account_name}</span>
           <span class="text-xs text-gray-400 ml-2">${acc.account_id}</span>
         </div>
-        <span class="text-xs font-medium px-2 py-0.5 rounded-full ${bad ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">
-          ${bad ? bad + ' campaign(s) with automation ON' : 'All compliant'}
+        <span class="text-xs font-medium px-2 py-0.5 rounded-full ${acc.total_flagged ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">
+          ${acc.total_flagged ? acc.total_flagged + ' flagged' : 'Clean'}
         </span>
       </div>
       <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-gray-50 text-gray-500 uppercase text-xs">
-            <tr><th class="px-3 py-2 text-left">Campaign</th>${header}<th class="px-3 py-2 text-center">Status</th></tr>
-          </thead>
+        <table class="w-full">
+          <thead class="bg-gray-50 text-gray-500 uppercase text-xs"><tr>${header}</tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
+      ${truncated}
     </div>`;
   }).join('');
+  box.classList.remove('hidden');
 }
 
 // ─────────────────────────────────────────────

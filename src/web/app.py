@@ -318,19 +318,28 @@ async def apply_recommendation(rec_id: str):
         return {"success": False, "error": str(exc)}
 
 
-@app.post("/api/audit/pmax-assets")
-async def audit_pmax_assets(customer_id: Optional[str] = None):
-    """Audit PMax asset automation settings (read-only).
+@app.get("/api/audits")
+async def list_audits():
+    """Return the audit catalog for the UI."""
+    from ..api.audits import catalog
 
-    With customer_id: audit that single account.
-    Without: audit every non-manager account under the MCC.
-    """
+    return {"audits": catalog()}
+
+
+@app.post("/api/audit/{audit_key}")
+async def run_audit(audit_key: str, customer_id: Optional[str] = None, days: int = 30):
+    """Run one read-only audit over one account or the whole MCC."""
     if _state["client"] is None:
         raise HTTPException(status_code=400, detail="Not connected.")
 
-    from ..api.pmax_audit import audit_account, AUTOMATION_TYPES
+    from ..api.audits import AUDITS
     from ..api.mcc_client import MCCClient
 
+    audit = AUDITS.get(audit_key)
+    if audit is None:
+        raise HTTPException(status_code=404, detail=f"Unknown audit '{audit_key}'")
+
+    days = max(1, min(days, 365))
     client = _state["client"]
 
     if customer_id:
@@ -348,34 +357,37 @@ async def audit_pmax_assets(customer_id: Optional[str] = None):
         targets = accounts
 
     results = []
-    total_campaigns = 0
-    non_compliant = 0
+    total_rows = 0
+    total_flagged = 0
     errors = 0
     for acc in targets:
         try:
-            campaigns = audit_account(client, acc["id"])
+            res = audit["run"](client, acc["id"], days)
         except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("PMax audit failed for %s: %s", acc["id"], exc)
+            logger.warning("Audit %s failed for %s: %s", audit_key, acc["id"], exc)
             errors += 1
             continue
-        if not campaigns:
+        if not res["rows"]:
             continue
-        total_campaigns += len(campaigns)
-        non_compliant += sum(1 for c in campaigns if not c["compliant"])
+        total_rows += res["total_rows"]
+        total_flagged += res["total_flagged"]
         results.append(
             {
                 "account_id": acc["id"],
                 "account_name": acc.get("name", acc["id"]),
-                "campaigns": campaigns,
+                **res,
             }
         )
 
     return {
-        "setting_labels": AUTOMATION_TYPES,
+        "audit_key": audit_key,
+        "label": audit["label"],
+        "columns": audit["columns"],
+        "days": days,
         "accounts_audited": len(targets) - errors,
-        "accounts_with_pmax": len(results),
-        "total_campaigns": total_campaigns,
-        "non_compliant_campaigns": non_compliant,
+        "accounts_with_findings": len(results),
+        "total_rows": total_rows,
+        "total_flagged": total_flagged,
         "errors": errors,
         "results": results,
     }
