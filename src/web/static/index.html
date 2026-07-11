@@ -61,6 +61,9 @@
         <i class="fa-solid fa-lightbulb w-5 text-center"></i> Recommendations
         <span id="rec-badge" class="ml-auto bg-orange-500 text-white text-xs rounded-full px-2 py-0.5 hidden">0</span>
       </a>
+      <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/10 transition" onclick="showView('audits')">
+        <i class="fa-solid fa-clipboard-check w-5 text-center"></i> Audits
+      </a>
       <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/10 transition" onclick="showView('changelog')">
         <i class="fa-solid fa-clock-rotate-left w-5 text-center"></i> Change Log
       </a>
@@ -168,6 +171,34 @@
           <p>Analyze accounts to see recommendations</p>
         </div>
       </div>
+    </div>
+
+    <!-- Audits View -->
+    <div id="view-audits" class="view">
+      <h1 class="text-2xl font-bold text-gray-800 mb-6">Audits</h1>
+
+      <div class="bg-white rounded-xl shadow p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-700 mb-2">
+          <i class="fa-solid fa-wand-magic-sparkles mr-2 text-purple-600"></i>PMax Asset Automation Audit
+        </h2>
+        <p class="text-sm text-gray-500 mb-4">
+          Checks all enabled Performance Max campaigns for Google's five auto-asset settings
+          (auto text, URL expansion, auto videos, image cropping, image extraction).
+          Standard: all five <b>opted out</b>. Read-only — nothing is changed.
+        </p>
+        <div class="flex flex-wrap gap-3 items-center">
+          <select id="audit-account" class="text-sm border rounded-lg px-3 py-2 text-gray-600">
+            <option value="">All accounts</option>
+          </select>
+          <button id="btn-pmax-audit" onclick="runPmaxAudit()"
+            class="bg-purple-600 hover:bg-purple-700 text-white text-sm px-4 py-2 rounded-lg transition flex items-center gap-2">
+            <i class="fa-solid fa-play"></i> Run Audit
+          </button>
+          <span id="audit-progress" class="text-sm text-gray-400"></span>
+        </div>
+      </div>
+
+      <div id="audit-results" class="space-y-4"></div>
     </div>
 
     <!-- Change Log View -->
@@ -315,6 +346,7 @@ function showView(name) {
   });
   if (name === 'changelog') loadChangeLog();
   if (name === 'recommendations') loadAllRecommendations();
+  if (name === 'audits') populateAuditAccounts();
 }
 
 // ─────────────────────────────────────────────
@@ -683,6 +715,122 @@ function closeModal(event) {
   if (!event || event.target === document.getElementById('modal')) {
     document.getElementById('modal').classList.add('hidden');
   }
+}
+
+// ─────────────────────────────────────────────
+// Audits
+// ─────────────────────────────────────────────
+function populateAuditAccounts() {
+  const sel = document.getElementById('audit-account');
+  if (!sel || sel.options.length > 1 || !accounts.length) return;
+  accounts.forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = `${a.name || a.id} (${a.id})`;
+    sel.appendChild(opt);
+  });
+}
+
+async function runPmaxAudit() {
+  const btn = document.getElementById('btn-pmax-audit');
+  const progress = document.getElementById('audit-progress');
+  const container = document.getElementById('audit-results');
+  const accId = document.getElementById('audit-account').value;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"><i class="fa-solid fa-circle-notch"></i></span> Auditing...';
+  progress.textContent = accId ? 'Auditing 1 account...' : 'Auditing all accounts — this can take a minute...';
+  container.innerHTML = '';
+
+  try {
+    const path = '/api/audit/pmax-assets' + (accId ? `?customer_id=${accId}` : '');
+    const d = await api('POST', path);
+    if (d.error || d.detail) { toast(d.error || d.detail, 'error'); return; }
+    progress.textContent = '';
+    renderPmaxAudit(d);
+  } catch (e) {
+    toast('Audit failed: ' + e.message, 'error');
+    progress.textContent = '';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-play"></i> Run Audit';
+  }
+}
+
+function renderPmaxAudit(d) {
+  const container = document.getElementById('audit-results');
+  const labels = d.setting_labels || {};
+  const types = Object.keys(labels);
+
+  const summary = `
+    <div class="bg-white rounded-xl shadow p-5 flex flex-wrap gap-6 text-sm">
+      <div><p class="text-gray-400 text-xs">Accounts audited</p><p class="text-xl font-bold text-gray-700">${d.accounts_audited}</p></div>
+      <div><p class="text-gray-400 text-xs">With PMax</p><p class="text-xl font-bold text-blue-700">${d.accounts_with_pmax}</p></div>
+      <div><p class="text-gray-400 text-xs">PMax campaigns</p><p class="text-xl font-bold text-gray-700">${d.total_campaigns}</p></div>
+      <div><p class="text-gray-400 text-xs">Non-compliant</p><p class="text-xl font-bold ${d.non_compliant_campaigns ? 'text-red-600' : 'text-green-600'}">${d.non_compliant_campaigns}</p></div>
+      ${d.errors ? `<div><p class="text-gray-400 text-xs">Errors</p><p class="text-xl font-bold text-orange-500">${d.errors}</p></div>` : ''}
+    </div>`;
+
+  if (!d.results.length) {
+    container.innerHTML = summary + `
+      <div class="bg-white rounded-xl shadow p-8 text-center text-gray-400">
+        <i class="fa-solid fa-circle-check text-4xl mb-3 text-green-200"></i>
+        <p>No enabled PMax campaigns found in the audited account(s)</p>
+      </div>`;
+    return;
+  }
+
+  const header = types.map(t =>
+    `<th class="px-2 py-2 text-center" title="${labels[t]}">${labels[t].split(' ')[0]}<br><span class="normal-case font-normal">${labels[t].split(' ').slice(1).join(' ')}</span></th>`
+  ).join('');
+
+  container.innerHTML = summary + d.results.map(acc => {
+    const rows = acc.campaigns.map(c => {
+      const cells = types.map(t => {
+        const st = c.settings[t];
+        const ok = st === 'OPTED_OUT';
+        return `<td class="px-2 py-2 text-center">
+          <span class="${ok ? 'text-green-600' : 'text-red-500 font-bold'}" title="${st}">
+            ${ok ? '<i class="fa-solid fa-circle-check"></i>' : '<i class="fa-solid fa-triangle-exclamation"></i> ON'}
+          </span></td>`;
+      }).join('');
+      return `
+        <tr class="border-t ${c.compliant ? '' : 'bg-red-50/50'}">
+          <td class="px-3 py-2">
+            <p class="font-medium text-gray-800 text-sm">${c.campaign_name}</p>
+            <p class="text-xs text-gray-400">${c.campaign_id}</p>
+          </td>
+          ${cells}
+          <td class="px-3 py-2 text-center">
+            ${c.compliant
+              ? '<span class="bg-green-100 text-green-700 text-xs font-medium px-2 py-0.5 rounded-full">OK</span>'
+              : `<span class="bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5 rounded-full">${c.flagged.length} ON</span>`}
+          </td>
+        </tr>`;
+    }).join('');
+
+    const bad = acc.campaigns.filter(c => !c.compliant).length;
+    return `
+    <div class="bg-white rounded-xl shadow overflow-hidden">
+      <div class="px-5 py-3 border-b flex items-center justify-between">
+        <div>
+          <span class="font-semibold text-gray-700">${acc.account_name}</span>
+          <span class="text-xs text-gray-400 ml-2">${acc.account_id}</span>
+        </div>
+        <span class="text-xs font-medium px-2 py-0.5 rounded-full ${bad ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">
+          ${bad ? bad + ' campaign(s) with automation ON' : 'All compliant'}
+        </span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-gray-500 uppercase text-xs">
+            <tr><th class="px-3 py-2 text-left">Campaign</th>${header}<th class="px-3 py-2 text-center">Status</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ─────────────────────────────────────────────

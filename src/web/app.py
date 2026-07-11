@@ -318,6 +318,69 @@ async def apply_recommendation(rec_id: str):
         return {"success": False, "error": str(exc)}
 
 
+@app.post("/api/audit/pmax-assets")
+async def audit_pmax_assets(customer_id: Optional[str] = None):
+    """Audit PMax asset automation settings (read-only).
+
+    With customer_id: audit that single account.
+    Without: audit every non-manager account under the MCC.
+    """
+    if _state["client"] is None:
+        raise HTTPException(status_code=400, detail="Not connected.")
+
+    from ..api.pmax_audit import audit_account, AUTOMATION_TYPES
+    from ..api.mcc_client import MCCClient
+
+    client = _state["client"]
+
+    if customer_id:
+        targets = [
+            next(
+                (a for a in _state["accounts"] if a["id"] == customer_id),
+                {"id": customer_id, "name": customer_id},
+            )
+        ]
+    else:
+        accounts = _state["accounts"]
+        if not accounts:
+            mcc = MCCClient(client, _state["mcc_id"])
+            accounts = [a for a in mcc.list_accounts() if not a["is_manager"]]
+        targets = accounts
+
+    results = []
+    total_campaigns = 0
+    non_compliant = 0
+    errors = 0
+    for acc in targets:
+        try:
+            campaigns = audit_account(client, acc["id"])
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("PMax audit failed for %s: %s", acc["id"], exc)
+            errors += 1
+            continue
+        if not campaigns:
+            continue
+        total_campaigns += len(campaigns)
+        non_compliant += sum(1 for c in campaigns if not c["compliant"])
+        results.append(
+            {
+                "account_id": acc["id"],
+                "account_name": acc.get("name", acc["id"]),
+                "campaigns": campaigns,
+            }
+        )
+
+    return {
+        "setting_labels": AUTOMATION_TYPES,
+        "accounts_audited": len(targets) - errors,
+        "accounts_with_pmax": len(results),
+        "total_campaigns": total_campaigns,
+        "non_compliant_campaigns": non_compliant,
+        "errors": errors,
+        "results": results,
+    }
+
+
 @app.get("/api/recommendations")
 async def get_all_recommendations():
     """Return all cached recommendations across all accounts."""
