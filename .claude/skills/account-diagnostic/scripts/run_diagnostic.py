@@ -1630,13 +1630,19 @@ def checks_dgen_video(data, cfg):
     flagged_settings = 0
     flagged_campaigns = set()
     for r in data.get('dgen_ads', []):
-        ad_type = r.ad_group_ad.ad.type.name
+        ad_type = getattr(r.ad_group_ad.ad.type, 'name', '')
         defaults = DGEN_AD_TYPE_SETTINGS.get(ad_type)
         if not defaults:
             continue  # carousel/product ads have no automation settings
         inspectable += 1
         current = dict(defaults)
         for setting in r.ad_group_ad.ad_group_ad_asset_automation_settings:
+            # Enum values newer than the installed google-ads library arrive
+            # as raw ints (no .name) — skip them, they can't match `current`.
+            if not hasattr(setting.asset_automation_type, 'name') or not hasattr(
+                setting.asset_automation_status, 'name'
+            ):
+                continue
             tname = setting.asset_automation_type.name
             if tname in current:
                 current[tname] = setting.asset_automation_status.name
