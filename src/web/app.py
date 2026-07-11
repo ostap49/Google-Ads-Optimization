@@ -318,6 +318,102 @@ async def apply_recommendation(rec_id: str):
         return {"success": False, "error": str(exc)}
 
 
+@app.post("/api/auto-apply-negatives/{customer_id}")
+async def auto_apply_negatives(
+    customer_id: str,
+    min_spend: float = 10.0,
+    max_apply: int = 20,
+    dry_run: bool = False,
+):
+    """Pull the latest search terms report, identify negative keyword
+    candidates, and apply them directly to the account.
+
+    Safety rails:
+    - only terms with zero conversions and spend >= min_spend
+    - at most max_apply negatives per run
+    - dry_run=true returns the candidate list without mutating anything
+    """
+    if _state["client"] is None:
+        raise HTTPException(status_code=400, detail="Not connected.")
+
+    from ..api.campaign_client import CampaignClient
+    from ..analyzers.search_term_analyzer import SearchTermAnalyzer
+    from ..appliers.keyword_applier import KeywordApplier
+    from ..recommendations.recommendation import RecommendationType
+
+    client = _state["client"]
+
+    try:
+        account_name = customer_id
+        for acc in _state["accounts"]:
+            if acc["id"] == customer_id:
+                account_name = acc.get("name", customer_id)
+                break
+
+        camp_client = CampaignClient(client, customer_id)
+        data = {
+            "search_terms": camp_client.get_search_terms(),
+            "keywords": camp_client.get_keywords(),
+        }
+
+        analyzer = SearchTermAnalyzer(
+            customer_id, account_name, negative_min_spend=min_spend
+        )
+        candidates = [
+            rec
+            for rec in analyzer.analyze(data)
+            if rec.rec_type == RecommendationType.KEYWORD_ADD_NEGATIVE
+        ]
+        # Highest wasted spend first, capped for safety
+        candidates.sort(key=lambda r: r.change_data.get("cost", 0.0), reverse=True)
+        candidates = candidates[:max_apply]
+
+        if dry_run:
+            return {
+                "customer_id": customer_id,
+                "dry_run": True,
+                "candidate_count": len(candidates),
+                "candidates": [rec.model_dump() for rec in candidates],
+            }
+
+        applier = KeywordApplier(client, DB_PATH)
+        applied, failed = [], []
+        for rec in candidates:
+            if applier.apply_safe(rec):
+                applied.append(rec)
+            else:
+                failed.append(rec)
+
+        # Cache results so they appear in the Recommendations view
+        existing = _state["recommendations"].get(customer_id, [])
+        existing_ids = {r.id for r in existing}
+        _state["recommendations"][customer_id] = existing + [
+            r for r in candidates if r.id not in existing_ids
+        ]
+
+        return {
+            "customer_id": customer_id,
+            "applied_count": len(applied),
+            "failed_count": len(failed),
+            "applied": [
+                {"search_term": r.change_data.get("search_term"),
+                 "campaign_name": r.campaign_name,
+                 "cost_saved": r.change_data.get("cost")}
+                for r in applied
+            ],
+            "failed": [
+                {"search_term": r.change_data.get("search_term"),
+                 "error": r.error_message}
+                for r in failed
+            ],
+        }
+    except Exception as exc:
+        logger.error(
+            "Auto-apply negatives failed for %s: %s", customer_id, exc, exc_info=True
+        )
+        return {"error": str(exc), "customer_id": customer_id}
+
+
 @app.get("/api/recommendations")
 async def get_all_recommendations():
     """Return all cached recommendations across all accounts."""
