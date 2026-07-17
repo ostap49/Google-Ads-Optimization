@@ -58,7 +58,7 @@ class GoogleAdsAuthenticator:
         logger.info("Building Google Ads client from YAML: %s", self.yaml_path)
         try:
             client = GoogleAdsClient.load_from_storage(
-                path=str(yaml_path), version="v21"
+                path=str(yaml_path), version="v24"
             )
             return client
         except Exception as exc:
@@ -93,7 +93,7 @@ class GoogleAdsAuthenticator:
 
         logger.info("Building Google Ads client from environment variables.")
         try:
-            client = GoogleAdsClient.load_from_dict(credentials, version="v21")
+            client = GoogleAdsClient.load_from_dict(credentials, version="v24")
             return client
         except Exception as exc:
             raise RuntimeError(
