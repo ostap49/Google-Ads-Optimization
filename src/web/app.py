@@ -393,6 +393,41 @@ async def run_audit(audit_key: str, customer_id: Optional[str] = None, days: int
     }
 
 
+@app.get("/api/audit/history")
+async def audit_history():
+    """Recent daily-sweep runs and the newest run's NEW findings."""
+    from ..jobs.daily_audit import read_history
+
+    return read_history()
+
+
+@app.post("/api/insights/{kind}")
+async def run_insight(kind: str, customer_id: str, days: int = 30):
+    """Period-over-period insight for one account (geo / keywords / pmax)."""
+    if _state["client"] is None:
+        raise HTTPException(status_code=400, detail="Not connected.")
+
+    from ..api.insights import INSIGHTS
+
+    fn = INSIGHTS.get(kind)
+    if fn is None:
+        raise HTTPException(status_code=404, detail=f"Unknown insight '{kind}'")
+
+    days = max(1, min(days, 180))
+    try:
+        data = fn(_state["client"], customer_id, days)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("Insight %s failed for %s: %s", kind, customer_id, exc, exc_info=True)
+        return {"error": str(exc)}
+
+    account_name = next(
+        (a.get("name") for a in _state["accounts"] if a["id"] == customer_id),
+        customer_id,
+    )
+    return {"kind": kind, "customer_id": customer_id, "account_name": account_name,
+            "days": days, **data}
+
+
 @app.get("/api/recommendations")
 async def get_all_recommendations():
     """Return all cached recommendations across all accounts."""

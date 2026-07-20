@@ -64,6 +64,9 @@
       <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/10 transition" onclick="showView('audits')">
         <i class="fa-solid fa-clipboard-check w-5 text-center"></i> Audits
       </a>
+      <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/10 transition" onclick="showView('insights')">
+        <i class="fa-solid fa-chart-column w-5 text-center"></i> Insights
+      </a>
       <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/10 transition" onclick="showView('changelog')">
         <i class="fa-solid fa-clock-rotate-left w-5 text-center"></i> Change Log
       </a>
@@ -192,9 +195,71 @@
         <span class="text-xs text-gray-400 ml-auto">All audits are read-only — nothing is changed in your accounts</span>
       </div>
 
+      <div id="audit-history" class="mb-6"></div>
+
       <div id="audit-cards" class="space-y-4">
         <div class="bg-white rounded-xl shadow p-8 text-center text-gray-400">
           <span class="spinner"><i class="fa-solid fa-circle-notch mr-2"></i></span>Loading audit catalog...
+        </div>
+      </div>
+    </div>
+
+    <!-- Insights View -->
+    <div id="view-insights" class="view">
+      <h1 class="text-2xl font-bold text-gray-800 mb-6">Insights</h1>
+
+      <div class="bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap gap-3 items-center">
+        <span class="text-sm font-medium text-gray-600">Account:</span>
+        <select id="insight-account" class="text-sm border rounded-lg px-3 py-2 text-gray-600">
+          <option value="">— select account —</option>
+        </select>
+        <span class="text-sm font-medium text-gray-600 ml-2">Period:</span>
+        <select id="insight-days" class="text-sm border rounded-lg px-3 py-2 text-gray-600">
+          <option value="7">7 days vs prev 7</option>
+          <option value="30" selected>30 days vs prev 30</option>
+          <option value="90">90 days vs prev 90</option>
+        </select>
+        <span class="text-xs text-gray-400 ml-auto">Each section compares the period against the previous one of the same length</span>
+      </div>
+
+      <div class="space-y-4">
+        <div class="bg-white rounded-xl shadow">
+          <div class="p-5 flex items-start justify-between gap-4 flex-wrap">
+            <div class="flex-1 min-w-64">
+              <h2 class="text-md font-semibold text-gray-700"><i class="fa-solid fa-earth-europe mr-2 text-blue-600"></i>Geo Performance</h2>
+              <p class="text-sm text-gray-500 mt-1">Best and worst regions by conversions and CPA, per campaign. Worst = spend with no conversions or CPA over 2× account average.</p>
+            </div>
+            <button id="insight-btn-geo" onclick="runInsight('geo')" class="bg-blue-700 hover:bg-blue-800 text-white text-sm px-4 py-2 rounded-lg transition shrink-0">
+              <i class="fa-solid fa-play"></i> Run
+            </button>
+          </div>
+          <div id="insight-result-geo" class="hidden border-t"></div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow">
+          <div class="p-5 flex items-start justify-between gap-4 flex-wrap">
+            <div class="flex-1 min-w-64">
+              <h2 class="text-md font-semibold text-gray-700"><i class="fa-solid fa-key mr-2 text-orange-500"></i>Keyword Movers</h2>
+              <p class="text-sm text-gray-500 mt-1">Keywords with the biggest spend change vs the previous period, with campaign and ad group, CPA and conversions deltas.</p>
+            </div>
+            <button id="insight-btn-keywords" onclick="runInsight('keywords')" class="bg-blue-700 hover:bg-blue-800 text-white text-sm px-4 py-2 rounded-lg transition shrink-0">
+              <i class="fa-solid fa-play"></i> Run
+            </button>
+          </div>
+          <div id="insight-result-keywords" class="hidden border-t"></div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow">
+          <div class="p-5 flex items-start justify-between gap-4 flex-wrap">
+            <div class="flex-1 min-w-64">
+              <h2 class="text-md font-semibold text-gray-700"><i class="fa-solid fa-cart-shopping mr-2 text-purple-600"></i>PMax Products</h2>
+              <p class="text-sm text-gray-500 mt-1">Per-product cost, conversions and ROAS in Performance Max campaigns vs the previous period. Flags products spending with zero conversions.</p>
+            </div>
+            <button id="insight-btn-pmax-products" onclick="runInsight('pmax-products')" class="bg-blue-700 hover:bg-blue-800 text-white text-sm px-4 py-2 rounded-lg transition shrink-0">
+              <i class="fa-solid fa-play"></i> Run
+            </button>
+          </div>
+          <div id="insight-result-pmax-products" class="hidden border-t"></div>
         </div>
       </div>
     </div>
@@ -344,7 +409,8 @@ function showView(name) {
   });
   if (name === 'changelog') loadChangeLog();
   if (name === 'recommendations') loadAllRecommendations();
-  if (name === 'audits') { populateAuditAccounts(); loadAuditCatalog(); }
+  if (name === 'audits') { populateAuditAccounts(); loadAuditCatalog(); loadAuditHistory(); }
+  if (name === 'insights') populateInsightAccounts();
 }
 
 // ─────────────────────────────────────────────
@@ -865,6 +931,168 @@ function renderAuditResult(key, d) {
       ${truncated}
     </div>`;
   }).join('');
+  box.classList.remove('hidden');
+}
+
+// ─────────────────────────────────────────────
+// Audit history (daily cron sweeps)
+// ─────────────────────────────────────────────
+async function loadAuditHistory() {
+  const box = document.getElementById('audit-history');
+  try {
+    const d = await api('GET', '/api/audit/history');
+    if (!d.runs || !d.runs.length) {
+      box.innerHTML = `
+        <div class="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800">
+          <i class="fa-solid fa-circle-info mr-2"></i>
+          Daily automatic sweeps not detected yet. Enable the cron on your server to track setting drift day over day.
+        </div>`;
+      return;
+    }
+    const rows = d.runs.map(r => `
+      <tr class="border-t">
+        <td class="px-3 py-2 text-gray-600">${(r.ts || '').replace('T', ' ')}</td>
+        <td class="px-3 py-2 text-right">${r.accounts}</td>
+        <td class="px-3 py-2 text-right">${r.total_flagged}</td>
+        <td class="px-3 py-2 text-right ${r.new_flagged ? 'text-red-600 font-bold' : 'text-green-600'}">${r.new_flagged}</td>
+        <td class="px-3 py-2 text-right text-gray-400">${r.errors || 0}</td>
+      </tr>`).join('');
+
+    const newList = (d.new_findings || []).map(f => `
+      <div class="text-xs px-3 py-1.5 border-t flex gap-2 items-center">
+        <span class="bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium">NEW</span>
+        <span class="text-gray-500">${f.audit_key}</span>
+        <span class="font-medium text-gray-700">${f.account_name || f.account_id}</span>
+        <span class="text-gray-500 truncate">${Object.entries(f.row).filter(([k]) => !k.startsWith('_')).slice(0, 3).map(([, v]) => v).join(' · ')}</span>
+      </div>`).join('');
+
+    box.innerHTML = `
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="px-5 py-3 border-b flex items-center justify-between">
+          <h2 class="text-md font-semibold text-gray-700"><i class="fa-solid fa-calendar-check mr-2 text-green-600"></i>Daily Sweep History</h2>
+          ${d.runs[0].new_flagged ? `<span class="bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5 rounded-full">${d.runs[0].new_flagged} new since yesterday</span>` : '<span class="bg-green-100 text-green-700 text-xs font-medium px-2 py-0.5 rounded-full">No new findings</span>'}
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-500 uppercase text-xs">
+              <tr><th class="px-3 py-2 text-left">Run</th><th class="px-3 py-2 text-right">Accounts</th><th class="px-3 py-2 text-right">Flagged</th><th class="px-3 py-2 text-right">New</th><th class="px-3 py-2 text-right">Errors</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        ${newList ? `<div class="bg-red-50/30">${newList}</div>` : ''}
+      </div>`;
+  } catch (e) {
+    box.innerHTML = '';
+  }
+}
+
+// ─────────────────────────────────────────────
+// Insights
+// ─────────────────────────────────────────────
+function populateInsightAccounts() {
+  const sel = document.getElementById('insight-account');
+  if (!sel || sel.options.length > 1 || !accounts.length) return;
+  accounts.forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = `${a.name || a.id} (${a.id})`;
+    sel.appendChild(opt);
+  });
+}
+
+function delta(cur, prev, invert = false) {
+  const d = cur - prev;
+  if (Math.abs(d) < 0.005) return '<span class="text-gray-300">—</span>';
+  const good = invert ? d < 0 : d > 0;
+  const arrow = d > 0 ? '▲' : '▼';
+  return `<span class="${good ? 'text-green-600' : 'text-red-500'} text-xs">${arrow}${Math.abs(d).toFixed(1)}</span>`;
+}
+
+async function runInsight(kind) {
+  const accId = document.getElementById('insight-account').value;
+  if (!accId) { toast('Select an account first', 'error'); return; }
+  const days = document.getElementById('insight-days').value;
+  const btn = document.getElementById(`insight-btn-${kind}`);
+  const box = document.getElementById(`insight-result-${kind}`);
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"><i class="fa-solid fa-circle-notch"></i></span>';
+  box.classList.add('hidden');
+
+  try {
+    const d = await api('POST', `/api/insights/${kind}?customer_id=${accId}&days=${days}`);
+    if (d.error || d.detail) { toast(d.error || d.detail, 'error'); return; }
+    renderInsight(kind, d);
+  } catch (e) {
+    toast('Insight failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-play"></i> Run';
+  }
+}
+
+function insightTable(headers, rowsHtml) {
+  return `<div class="overflow-x-auto"><table class="w-full text-sm">
+    <thead class="bg-gray-50 text-gray-500 uppercase text-xs"><tr>${headers.map(h => `<th class="px-3 py-2 text-left whitespace-nowrap">${h}</th>`).join('')}</tr></thead>
+    <tbody>${rowsHtml}</tbody></table></div>`;
+}
+
+function metricCells(r, currency) {
+  return `
+    <td class="px-3 py-2 whitespace-nowrap">${formatCost(r.cost, currency)} ${delta(r.cost, r.prev_cost, true)}</td>
+    <td class="px-3 py-2 whitespace-nowrap">${r.conversions} ${delta(r.conversions, r.prev_conversions)}</td>
+    <td class="px-3 py-2 whitespace-nowrap">${r.cpa ? formatCost(r.cpa, currency) : '—'} ${delta(r.cpa, r.prev_cpa, true)}</td>
+    <td class="px-3 py-2 whitespace-nowrap">${r.roas.toFixed(2)}x ${delta(r.roas, r.prev_roas)}</td>`;
+}
+
+function renderInsight(kind, d) {
+  const box = document.getElementById(`insight-result-${kind}`);
+  const currency = getAccountCurrency(d.customer_id);
+  let html = '';
+
+  if (kind === 'geo') {
+    const mkRows = list => list.map(r => `
+      <tr class="border-t">
+        <td class="px-3 py-2 font-medium text-gray-800">${r.geo}</td>
+        <td class="px-3 py-2 text-gray-500 text-xs">${r.campaign}</td>
+        <td class="px-3 py-2">${r.clicks}</td>
+        ${metricCells(r, currency)}
+      </tr>`).join('');
+    html = `
+      <div class="px-5 py-3 bg-gray-50 text-sm text-gray-500">Avg CPA: <b>${formatCost(d.avg_cpa, currency)}</b> · ${d.total_geos} geo/campaign combinations · arrows compare vs previous ${d.days} days</div>
+      <div class="px-5 py-3"><h3 class="text-sm font-semibold text-green-700 mb-2"><i class="fa-solid fa-arrow-trend-up mr-1"></i>Best geos (by conversions)</h3>
+      ${d.best.length ? insightTable(['Geo', 'Campaign', 'Clicks', 'Cost', 'Conv.', 'CPA', 'ROAS'], mkRows(d.best)) : '<p class="text-sm text-gray-400">No converting geos in this period</p>'}</div>
+      <div class="px-5 py-3 border-t"><h3 class="text-sm font-semibold text-red-600 mb-2"><i class="fa-solid fa-arrow-trend-down mr-1"></i>Worst geos (spend without results)</h3>
+      ${d.worst.length ? insightTable(['Geo', 'Campaign', 'Clicks', 'Cost', 'Conv.', 'CPA', 'ROAS'], mkRows(d.worst)) : '<p class="text-sm text-gray-400">No wasteful geos found</p>'}</div>`;
+  } else if (kind === 'keywords') {
+    const rows = d.rows.map(r => `
+      <tr class="border-t">
+        <td class="px-3 py-2 font-medium text-gray-800">${r.keyword}</td>
+        <td class="px-3 py-2 text-gray-500 text-xs">${r.campaign}<br>${r.ad_group}</td>
+        <td class="px-3 py-2">${r.clicks}</td>
+        ${metricCells(r, currency)}
+      </tr>`).join('');
+    html = `
+      <div class="px-5 py-3 bg-gray-50 text-sm text-gray-500">${d.total_rows} keywords with spend · sorted by biggest spend change · arrows compare vs previous ${d.days} days</div>
+      ${insightTable(['Keyword', 'Campaign / Ad Group', 'Clicks', 'Cost', 'Conv.', 'CPA', 'ROAS'], rows)}`;
+  } else if (kind === 'pmax-products') {
+    const rows = d.rows.map(r => `
+      <tr class="border-t ${r._flag ? 'bg-red-50/50' : ''}">
+        <td class="px-3 py-2">
+          <p class="font-medium text-gray-800 text-sm">${r.product}</p>
+          <p class="text-xs text-gray-400">${r.product_id} · ${r.campaign}</p>
+        </td>
+        <td class="px-3 py-2">${r.clicks}</td>
+        ${metricCells(r, currency)}
+        <td class="px-3 py-2">${r._flag ? '<span class="bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5 rounded-full">No conv.</span>' : ''}</td>
+      </tr>`).join('');
+    html = `
+      <div class="px-5 py-3 bg-gray-50 text-sm text-gray-500">${d.total_rows} products · <b class="${d.flagged ? 'text-red-600' : 'text-green-600'}">${d.flagged} spending with zero conversions</b> · arrows compare vs previous ${d.days} days</div>
+      ${d.rows.length ? insightTable(['Product', 'Clicks', 'Cost', 'Conv.', 'CPA', 'ROAS', ''], rows) : '<p class="p-5 text-sm text-gray-400">No PMax product data in this period</p>'}`;
+  }
+
+  box.innerHTML = html;
   box.classList.remove('hidden');
 }
 
