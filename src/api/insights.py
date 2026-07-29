@@ -27,10 +27,16 @@ def _windows(days: int) -> Tuple[str, str]:
 
 
 def _search(client: GoogleAdsClient, customer_id: str, query: str):
+    """Yield response batches.
+
+    Generator on purpose: keeps `service` alive while the stream is being
+    consumed, avoiding '499 Stream removed (Channel deallocated!)'.
+    """
     service = client.get_service("GoogleAdsService")
-    return service.search_stream(
+    for batch in service.search_stream(
         customer_id=customer_id.replace("-", ""), query=query
-    )
+    ):
+        yield batch
 
 
 def _metrics_of(m) -> Dict[str, float]:

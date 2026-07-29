@@ -36,10 +36,18 @@ def _date_clause(days: int) -> str:
 
 
 def _search(client: GoogleAdsClient, customer_id: str, query: str):
+    """Yield response batches.
+
+    Implemented as a generator so `service` stays referenced for the whole
+    duration of streaming — returning the raw stream lets the service (and
+    its gRPC channel) get garbage-collected mid-read, which surfaces as
+    '499 Stream removed (Channel deallocated!)'.
+    """
     service = client.get_service("GoogleAdsService")
-    return service.search_stream(
+    for batch in service.search_stream(
         customer_id=customer_id.replace("-", ""), query=query
-    )
+    ):
+        yield batch
 
 
 def _result(rows: List[Dict[str, Any]]) -> Dict[str, Any]:

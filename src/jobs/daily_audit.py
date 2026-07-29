@@ -14,7 +14,7 @@ import json
 import logging
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
@@ -107,7 +107,7 @@ def run_sweep() -> int:
     cur = conn.execute(
         "INSERT INTO runs (ts, accounts, total_flagged, new_flagged, errors) "
         "VALUES (?, ?, 0, 0, 0)",
-        (datetime.utcnow().isoformat(timespec="seconds"), len(accounts)),
+        (datetime.now(timezone.utc).isoformat(timespec="seconds"), len(accounts)),
     )
     run_id = cur.lastrowid
 
