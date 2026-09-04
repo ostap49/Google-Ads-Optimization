@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -448,6 +448,148 @@ async def account_score(customer_id: str, days: int = 30):
         customer_id,
     )
     return {"customer_id": customer_id, "account_name": account_name, **data}
+
+
+# ---------------------------------------------------------------------------
+# Google OAuth (Ads + Merchant Center) — in-app connect flow
+# ---------------------------------------------------------------------------
+
+OAUTH_SCOPES = (
+    "https://www.googleapis.com/auth/adwords "
+    "https://www.googleapis.com/auth/content"
+)
+OAUTH_REDIRECT_URI = os.getenv(
+    "OAUTH_REDIRECT_URI", "https://ads.ostap49.marketing/api/oauth/callback"
+)
+
+
+def _persist_refresh_token(token: str) -> None:
+    """Store the new refresh token everywhere the app reads it from."""
+    os.environ["GOOGLE_ADS_REFRESH_TOKEN"] = token
+
+    env_path = Path(".env")
+    if env_path.exists():
+        lines, found = [], False
+        for ln in env_path.read_text(encoding="utf-8").splitlines():
+            if ln.startswith("GOOGLE_ADS_REFRESH_TOKEN="):
+                lines.append(f"GOOGLE_ADS_REFRESH_TOKEN={token}")
+                found = True
+            else:
+                lines.append(ln)
+        if not found:
+            lines.append(f"GOOGLE_ADS_REFRESH_TOKEN={token}")
+        env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Keep the skills' yaml in sync too, if present
+    yaml_path = Path(".claude/skills/account-diagnostic/google-ads.yaml")
+    if yaml_path.exists():
+        lines = [
+            f"refresh_token: {token}"
+            if ln.startswith("refresh_token:")
+            else ln
+            for ln in yaml_path.read_text(encoding="utf-8").splitlines()
+        ]
+        yaml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+@app.get("/api/oauth/start")
+async def oauth_start():
+    """Redirect to Google's consent screen for Ads + Merchant scopes."""
+    import urllib.parse
+
+    client_id = os.getenv("GOOGLE_ADS_CLIENT_ID", "")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="GOOGLE_ADS_CLIENT_ID not set")
+    params = urllib.parse.urlencode(
+        {
+            "client_id": client_id,
+            "redirect_uri": OAUTH_REDIRECT_URI,
+            "response_type": "code",
+            "scope": OAUTH_SCOPES,
+            "access_type": "offline",
+            "prompt": "consent",  # force a refresh_token every time
+        }
+    )
+    return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+
+
+@app.get("/api/oauth/callback")
+async def oauth_callback(code: Optional[str] = None, error: Optional[str] = None):
+    """Exchange the auth code, persist the refresh token, reconnect."""
+    import json as _json
+    import urllib.parse
+    import urllib.request
+
+    def page(title: str, body: str, ok: bool = True) -> HTMLResponse:
+        color = "#16a34a" if ok else "#dc2626"
+        return HTMLResponse(
+            f"<html><body style='font-family:sans-serif;display:flex;align-items:center;"
+            f"justify-content:center;height:100vh;background:#f3f4f6'>"
+            f"<div style='background:#fff;padding:40px;border-radius:16px;max-width:480px;"
+            f"box-shadow:0 4px 12px rgba(0,0,0,.08)'>"
+            f"<h2 style='color:{color};margin-top:0'>{title}</h2>"
+            f"<p style='color:#374151'>{body}</p>"
+            f"<a href='/' style='color:#1d4ed8'>&larr; Back to the dashboard</a>"
+            f"</div></body></html>"
+        )
+
+    if error:
+        return page("Authorization cancelled", f"Google returned: {error}", ok=False)
+    if not code:
+        return page("Missing code", "No authorization code in the callback.", ok=False)
+
+    data = urllib.parse.urlencode(
+        {
+            "code": code,
+            "client_id": os.getenv("GOOGLE_ADS_CLIENT_ID", ""),
+            "client_secret": os.getenv("GOOGLE_ADS_CLIENT_SECRET", ""),
+            "redirect_uri": OAUTH_REDIRECT_URI,
+            "grant_type": "authorization_code",
+        }
+    ).encode()
+    req = urllib.request.Request(
+        "https://oauth2.googleapis.com/token", data=data, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = _json.loads(resp.read().decode())
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("OAuth code exchange failed: %s", exc)
+        return page("Token exchange failed", str(exc), ok=False)
+
+    refresh = payload.get("refresh_token")
+    if not refresh:
+        return page(
+            "No refresh token returned",
+            "Revoke the app's access at myaccount.google.com/permissions "
+            "and try connecting again.",
+            ok=False,
+        )
+
+    _persist_refresh_token(refresh)
+
+    # Rebuild the Google Ads client with the fresh token
+    try:
+        from ..auth.google_ads_auth import GoogleAdsAuthenticator
+
+        auth = GoogleAdsAuthenticator(use_env=True)
+        if auth.test_connection():
+            _state["client"] = auth.get_client()
+            _state["mcc_id"] = auth.login_customer_id
+            logger.info("OAuth reconnect OK, MCC %s", _state["mcc_id"])
+            return page(
+                "Connected!",
+                "Google Ads + Merchant Center access granted. The token is saved "
+                "on the server — Ads queries and product bucketing now work.",
+            )
+        return page(
+            "Token saved, but Ads connection test failed",
+            "Check the service logs (journalctl -u adsopt).",
+            ok=False,
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("Reconnect after OAuth failed: %s", exc, exc_info=True)
+        return page("Token saved, reconnect failed", str(exc), ok=False)
 
 
 @app.get("/api/merchant/accounts")
