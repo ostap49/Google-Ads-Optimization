@@ -428,6 +428,28 @@ async def run_insight(kind: str, customer_id: str, days: int = 30):
             "days": days, **data}
 
 
+@app.post("/api/score")
+async def account_score(customer_id: str, days: int = 30):
+    """GetProfit-style 0-100 account scorecard (read-only)."""
+    if _state["client"] is None:
+        raise HTTPException(status_code=400, detail="Not connected.")
+
+    from ..api.score import compute_score
+
+    days = max(7, min(days, 90))
+    try:
+        data = compute_score(_state["client"], customer_id, days)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("Score failed for %s: %s", customer_id, exc, exc_info=True)
+        return {"error": str(exc)}
+
+    account_name = next(
+        (a.get("name") for a in _state["accounts"] if a["id"] == customer_id),
+        customer_id,
+    )
+    return {"customer_id": customer_id, "account_name": account_name, **data}
+
+
 @app.get("/api/recommendations")
 async def get_all_recommendations():
     """Return all cached recommendations across all accounts."""
