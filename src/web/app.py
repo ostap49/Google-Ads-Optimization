@@ -450,6 +450,62 @@ async def account_score(customer_id: str, days: int = 30):
     return {"customer_id": customer_id, "account_name": account_name, **data}
 
 
+@app.get("/api/merchant/accounts")
+async def merchant_accounts():
+    """Merchant Center accounts reachable with the configured OAuth token."""
+    from ..api.merchant_client import MerchantClient, MerchantError
+
+    try:
+        return {"accounts": MerchantClient().authinfo()}
+    except MerchantError as exc:
+        return {"error": str(exc)}
+
+
+@app.post("/api/merchant/bucketize")
+async def merchant_bucketize(
+    merchant_id: str,
+    customer_id: str,
+    days: int = 30,
+    target_roas: float = 3.0,
+    villain_cost: float = 10.0,
+    zombie_impr: int = 10,
+):
+    """Join the Merchant feed with Ads performance and bucket every product."""
+    if _state["client"] is None:
+        raise HTTPException(status_code=400, detail="Not connected.")
+
+    from ..api.merchant_client import MerchantClient, MerchantError
+    from ..api.bucketing import product_performance, bucketize
+
+    days = max(7, min(days, 180))
+    try:
+        mc = MerchantClient()
+        feed = mc.list_products(merchant_id)
+        if not feed:
+            return {"error": f"Merchant {merchant_id}: product feed is empty "
+                             f"(or no access to this merchant)."}
+        statuses = mc.list_statuses(merchant_id)
+        perf = product_performance(_state["client"], customer_id, days)
+        data = bucketize(
+            feed, statuses, perf,
+            target_roas=target_roas,
+            villain_cost=villain_cost,
+            zombie_impr=zombie_impr,
+        )
+    except MerchantError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("Bucketize failed: %s", exc, exc_info=True)
+        return {"error": str(exc)}
+
+    account_name = next(
+        (a.get("name") for a in _state["accounts"] if a["id"] == customer_id),
+        customer_id,
+    )
+    return {"merchant_id": merchant_id, "customer_id": customer_id,
+            "account_name": account_name, "days": days, **data}
+
+
 @app.get("/api/recommendations")
 async def get_all_recommendations():
     """Return all cached recommendations across all accounts."""
