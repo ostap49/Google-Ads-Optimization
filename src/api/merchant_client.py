@@ -29,10 +29,10 @@ class MerchantError(Exception):
 class MerchantClient:
     """Minimal read-only Content API client."""
 
-    def __init__(self):
+    def __init__(self, refresh_token: Optional[str] = None):
         self.client_id = os.getenv("GOOGLE_ADS_CLIENT_ID", "")
         self.client_secret = os.getenv("GOOGLE_ADS_CLIENT_SECRET", "")
-        self.refresh_token = os.getenv("GOOGLE_ADS_REFRESH_TOKEN", "")
+        self.refresh_token = refresh_token or os.getenv("GOOGLE_ADS_REFRESH_TOKEN", "")
         self._token: Optional[str] = None
         self._token_exp: float = 0.0
         if not (self.client_id and self.client_secret and self.refresh_token):

@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,6 +30,150 @@ _state: Dict[str, Any] = {
 
 DB_PATH = os.getenv("CHANGES_LOG_DB", "/tmp/changes_log.db")
 CONFIG_DIR = Path(os.getenv("CONFIG_DIR", "/tmp/google-ads-config"))
+
+# ---------------------------------------------------------------------------
+# Zones: "admin" = the classic MCC zone (env credentials, global _state);
+# "user" = self-serve zone — anyone signs in with Google and works with the
+# ad accounts THEIR token can reach, no MCC binding.
+# ---------------------------------------------------------------------------
+
+SESSION_COOKIE = "gao_session"
+ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.getenv("ADMIN_EMAILS", "ostap49.hp@gmail.com").split(",")
+    if e.strip()
+}
+_user_states: Dict[str, Dict[str, Any]] = {}
+
+
+def _build_user_client(refresh_token: str, login_customer_id: Optional[str] = None):
+    from google.ads.googleads.client import GoogleAdsClient
+
+    cfg: Dict[str, Any] = {
+        "developer_token": os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN", ""),
+        "client_id": os.getenv("GOOGLE_ADS_CLIENT_ID", ""),
+        "client_secret": os.getenv("GOOGLE_ADS_CLIENT_SECRET", ""),
+        "refresh_token": refresh_token,
+        "use_proto_plus": True,
+    }
+    if login_customer_id:
+        cfg["login_customer_id"] = str(login_customer_id)
+    return GoogleAdsClient.load_from_dict(cfg, version="v24")
+
+
+def _ctx(request: Request) -> Dict[str, Any]:
+    """Resolve the working state for this request: user session or admin."""
+    from .auth_store import get_session_user
+
+    user = get_session_user(request.cookies.get(SESSION_COOKIE))
+    if user and user["zone"] != "admin":
+        st = _user_states.get(user["email"])
+        if st is None:
+            st = {
+                "client": None,
+                "mcc_id": None,
+                "accounts": [],
+                "recommendations": {},
+                "clients": {},
+                "zone": "user",
+                "email": user["email"],
+                "refresh_token": user["refresh_token"],
+            }
+            try:
+                st["client"] = _build_user_client(user["refresh_token"])
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.error("User client build failed for %s: %s", user["email"], exc)
+            _user_states[user["email"]] = st
+        return st
+
+    _state.setdefault("clients", {})
+    _state.setdefault("zone", "admin")
+    _state["email"] = user["email"] if user else None
+    return _state
+
+
+def _client_for(ctx: Dict[str, Any], customer_id: Optional[str] = None):
+    """Client with the right login_customer_id for the target account."""
+    if ctx.get("zone") != "user" or not customer_id:
+        return ctx["client"]
+    login = next(
+        (
+            a.get("via_manager")
+            for a in ctx.get("accounts", [])
+            if a["id"] == customer_id
+        ),
+        None,
+    )
+    if not login:
+        return ctx["client"]
+    cl = ctx["clients"].get(login)
+    if cl is None:
+        cl = _build_user_client(ctx["refresh_token"], login)
+        ctx["clients"][login] = cl
+    return cl
+
+
+def _list_user_accounts(ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Accounts reachable by the user's own token (no MCC binding).
+
+    Direct accounts are queried as-is; any accessible manager account is
+    expanded into its children (queries to children carry that manager as
+    login_customer_id via _client_for).
+    """
+    from ..api.mcc_client import MCCClient
+
+    client = ctx["client"]
+    names = client.get_service("CustomerService").list_accessible_customers().resource_names
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for rn in names:
+        cid = rn.split("/")[-1]
+        try:
+            ga = client.get_service("GoogleAdsService")
+            meta = None
+            for batch in ga.search_stream(
+                customer_id=cid,
+                query="""
+                    SELECT customer.descriptive_name, customer.currency_code,
+                           customer.time_zone, customer.manager,
+                           customer.test_account
+                    FROM customer
+                """,
+            ):
+                for r in batch.results:
+                    meta = r.customer
+            if meta is None:
+                continue
+            if meta.manager:
+                child_client = _build_user_client(ctx["refresh_token"], cid)
+                ctx["clients"][cid] = child_client
+                for acc in MCCClient(child_client, cid).get_accounts_with_performance():
+                    if acc["id"] in seen:
+                        continue
+                    seen.add(acc["id"])
+                    acc["via_manager"] = cid
+                    out.append(acc)
+            else:
+                if cid in seen:
+                    continue
+                seen.add(cid)
+                perf = MCCClient(client, cid)._fetch_account_performance(cid)
+                out.append(
+                    {
+                        "id": cid,
+                        "name": meta.descriptive_name,
+                        "currency": meta.currency_code,
+                        "timezone": meta.time_zone,
+                        "status": "ENABLED",
+                        "is_manager": False,
+                        "is_test": meta.test_account,
+                        "via_manager": None,
+                        **perf,
+                    }
+                )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Skipping accessible customer %s: %s", cid, exc)
+    return out
 
 # ---------------------------------------------------------------------------
 # FastAPI app setup
@@ -173,12 +317,26 @@ async def serve_index():
 
 
 @app.get("/api/status")
-async def get_status():
-    """Return connection status."""
+async def get_status(request: Request):
+    """Return connection status for the current zone (admin MCC or user)."""
+    ctx = _ctx(request)
     return {
-        "connected": _state["client"] is not None,
-        "mcc_id": _state["mcc_id"],
+        "connected": ctx["client"] is not None,
+        "mcc_id": ctx.get("mcc_id"),
+        "zone": ctx.get("zone", "admin"),
+        "email": ctx.get("email"),
     }
+
+
+@app.get("/api/logout")
+async def logout(request: Request):
+    """Drop the session and go back to the dashboard."""
+    from .auth_store import delete_session
+
+    delete_session(request.cookies.get(SESSION_COOKIE))
+    resp = RedirectResponse("/")
+    resp.delete_cookie(SESSION_COOKIE)
+    return resp
 
 
 @app.post("/api/connect")
@@ -214,26 +372,27 @@ async def connect(request: ConnectRequest):
 
 
 @app.get("/api/accounts")
-async def list_accounts():
-    """List all MCC accounts with performance metrics."""
-    if _state["client"] is None:
-        return {"error": "Not connected. Please configure credentials first."}
+async def list_accounts(request: Request):
+    """List accounts with performance: MCC children (admin) or the
+    accounts the signed-in user's own token can reach (user zone)."""
+    ctx = _ctx(request)
+    if ctx["client"] is None:
+        return {"error": "Not connected. Sign in with Google or configure credentials."}
 
     from ..api.mcc_client import MCCClient
 
     try:
-        mcc_id = _state["mcc_id"]
-        if not mcc_id:
-            return {"error": "MCC customer ID not configured."}
+        if ctx.get("zone") == "user":
+            accounts = _list_user_accounts(ctx)
+        else:
+            mcc_id = ctx.get("mcc_id")
+            if not mcc_id:
+                return {"error": "MCC customer ID not configured."}
+            accounts = MCCClient(ctx["client"], mcc_id).get_accounts_with_performance()
 
-        mcc_client = MCCClient(_state["client"], mcc_id)
-        accounts = mcc_client.get_accounts_with_performance()
-        _state["accounts"] = accounts
-
-        # Attach recommendation counts
+        ctx["accounts"] = accounts
         for acc in accounts:
-            cid = acc["id"]
-            recs = _state["recommendations"].get(cid, [])
+            recs = ctx["recommendations"].get(acc["id"], [])
             acc["recommendation_count"] = len(recs)
 
         return {"accounts": accounts}
@@ -243,21 +402,22 @@ async def list_accounts():
 
 
 @app.post("/api/analyze/{customer_id}")
-async def analyze_account(customer_id: str):
+async def analyze_account(customer_id: str, request: Request):
     """Run all analyzers for a specific account and cache results."""
-    if _state["client"] is None:
+    ctx = _ctx(request)
+    if ctx["client"] is None:
         raise HTTPException(status_code=400, detail="Not connected.")
 
     from ..api.account_client import AccountClient
     from ..api.campaign_client import CampaignClient
     from ..recommendations.recommendation_engine import RecommendationEngine
 
-    client = _state["client"]
+    client = _client_for(ctx, customer_id)
 
     try:
         # Find account name from cached accounts
         account_name = customer_id
-        for acc in _state["accounts"]:
+        for acc in ctx["accounts"]:
             if acc["id"] == customer_id:
                 account_name = acc.get("name", customer_id)
                 break
@@ -276,7 +436,7 @@ async def analyze_account(customer_id: str):
 
         engine = RecommendationEngine()
         recs = engine.analyze_account(customer_id, account_name, data, date_range)
-        _state["recommendations"][customer_id] = recs
+        ctx["recommendations"][customer_id] = recs
 
         return {
             "customer_id": customer_id,
@@ -290,17 +450,25 @@ async def analyze_account(customer_id: str):
 
 
 @app.post("/api/apply/{rec_id}")
-async def apply_recommendation(rec_id: str):
+async def apply_recommendation(rec_id: str, request: Request):
     """Apply a specific recommendation by its ID."""
-    if _state["client"] is None:
+    ctx = _ctx(request)
+    if ctx["client"] is None:
         raise HTTPException(status_code=400, detail="Not connected.")
 
-    rec = _find_recommendation_by_id(rec_id)
+    rec = None
+    for recs in ctx["recommendations"].values():
+        for r in recs:
+            if r.id == rec_id:
+                rec = r
+                break
     if rec is None:
         raise HTTPException(status_code=404, detail=f"Recommendation '{rec_id}' not found.")
 
     try:
-        applier = _get_applier_for_recommendation(rec, _state["client"], DB_PATH)
+        applier = _get_applier_for_recommendation(
+            rec, _client_for(ctx, rec.customer_id), DB_PATH
+        )
         if applier is None:
             return {
                 "success": False,
@@ -327,9 +495,15 @@ async def list_audits():
 
 
 @app.post("/api/audit/{audit_key}")
-async def run_audit(audit_key: str, customer_id: Optional[str] = None, days: int = 30):
-    """Run one read-only audit over one account or the whole MCC."""
-    if _state["client"] is None:
+async def run_audit(
+    audit_key: str,
+    request: Request,
+    customer_id: Optional[str] = None,
+    days: int = 30,
+):
+    """Run one read-only audit over one account or all reachable accounts."""
+    ctx = _ctx(request)
+    if ctx["client"] is None:
         raise HTTPException(status_code=400, detail="Not connected.")
 
     from ..api.audits import AUDITS
@@ -340,19 +514,22 @@ async def run_audit(audit_key: str, customer_id: Optional[str] = None, days: int
         raise HTTPException(status_code=404, detail=f"Unknown audit '{audit_key}'")
 
     days = max(1, min(days, 365))
-    client = _state["client"]
+    client = ctx["client"]
 
     if customer_id:
         targets = [
             next(
-                (a for a in _state["accounts"] if a["id"] == customer_id),
+                (a for a in ctx["accounts"] if a["id"] == customer_id),
                 {"id": customer_id, "name": customer_id},
             )
         ]
     else:
-        accounts = _state["accounts"]
-        if not accounts:
-            mcc = MCCClient(client, _state["mcc_id"])
+        accounts = ctx["accounts"]
+        if not accounts and ctx.get("zone") == "user":
+            accounts = _list_user_accounts(ctx)
+            ctx["accounts"] = accounts
+        elif not accounts:
+            mcc = MCCClient(client, ctx["mcc_id"])
             accounts = [a for a in mcc.list_accounts() if not a["is_manager"]]
         targets = accounts
 
@@ -362,7 +539,7 @@ async def run_audit(audit_key: str, customer_id: Optional[str] = None, days: int
     errors = 0
     for acc in targets:
         try:
-            res = audit["run"](client, acc["id"], days)
+            res = audit["run"](_client_for(ctx, acc["id"]), acc["id"], days)
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("Audit %s failed for %s: %s", audit_key, acc["id"], exc)
             errors += 1
@@ -394,17 +571,20 @@ async def run_audit(audit_key: str, customer_id: Optional[str] = None, days: int
 
 
 @app.get("/api/audit/history")
-async def audit_history():
-    """Recent daily-sweep runs and the newest run's NEW findings."""
+async def audit_history(request: Request):
+    """Recent daily-sweep runs (admin MCC zone only — the cron is global)."""
+    if _ctx(request).get("zone") == "user":
+        return {"runs": [], "new_findings": []}
     from ..jobs.daily_audit import read_history
 
     return read_history()
 
 
 @app.post("/api/insights/{kind}")
-async def run_insight(kind: str, customer_id: str, days: int = 30):
+async def run_insight(kind: str, customer_id: str, request: Request, days: int = 30):
     """Period-over-period insight for one account (geo / keywords / pmax)."""
-    if _state["client"] is None:
+    ctx = _ctx(request)
+    if ctx["client"] is None:
         raise HTTPException(status_code=400, detail="Not connected.")
 
     from ..api.insights import INSIGHTS
@@ -415,13 +595,13 @@ async def run_insight(kind: str, customer_id: str, days: int = 30):
 
     days = max(1, min(days, 180))
     try:
-        data = fn(_state["client"], customer_id, days)
+        data = fn(_client_for(ctx, customer_id), customer_id, days)
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("Insight %s failed for %s: %s", kind, customer_id, exc, exc_info=True)
         return {"error": str(exc)}
 
     account_name = next(
-        (a.get("name") for a in _state["accounts"] if a["id"] == customer_id),
+        (a.get("name") for a in ctx["accounts"] if a["id"] == customer_id),
         customer_id,
     )
     return {"kind": kind, "customer_id": customer_id, "account_name": account_name,
@@ -429,22 +609,23 @@ async def run_insight(kind: str, customer_id: str, days: int = 30):
 
 
 @app.post("/api/score")
-async def account_score(customer_id: str, days: int = 30):
+async def account_score(customer_id: str, request: Request, days: int = 30):
     """GetProfit-style 0-100 account scorecard (read-only)."""
-    if _state["client"] is None:
+    ctx = _ctx(request)
+    if ctx["client"] is None:
         raise HTTPException(status_code=400, detail="Not connected.")
 
     from ..api.score import compute_score
 
     days = max(7, min(days, 90))
     try:
-        data = compute_score(_state["client"], customer_id, days)
+        data = compute_score(_client_for(ctx, customer_id), customer_id, days)
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("Score failed for %s: %s", customer_id, exc, exc_info=True)
         return {"error": str(exc)}
 
     account_name = next(
-        (a.get("name") for a in _state["accounts"] if a["id"] == customer_id),
+        (a.get("name") for a in ctx["accounts"] if a["id"] == customer_id),
         customer_id,
     )
     return {"customer_id": customer_id, "account_name": account_name, **data}
@@ -455,6 +636,7 @@ async def account_score(customer_id: str, days: int = 30):
 # ---------------------------------------------------------------------------
 
 OAUTH_SCOPES = (
+    "openid email "
     "https://www.googleapis.com/auth/adwords "
     "https://www.googleapis.com/auth/content"
 )
@@ -566,39 +748,74 @@ async def oauth_callback(code: Optional[str] = None, error: Optional[str] = None
             ok=False,
         )
 
-    _persist_refresh_token(refresh)
-
-    # Rebuild the Google Ads client with the fresh token
+    # Identify the user from the id_token (came straight from Google over TLS)
+    email = ""
     try:
-        from ..auth.google_ads_auth import GoogleAdsAuthenticator
+        import base64
 
-        auth = GoogleAdsAuthenticator(use_env=True)
-        if auth.test_connection():
-            _state["client"] = auth.get_client()
-            _state["mcc_id"] = auth.login_customer_id
-            logger.info("OAuth reconnect OK, MCC %s", _state["mcc_id"])
-            return page(
-                "Connected!",
-                "Google Ads + Merchant Center access granted. The token is saved "
-                "on the server — Ads queries and product bucketing now work.",
-            )
-        return page(
-            "Token saved, but Ads connection test failed",
-            "Check the service logs (journalctl -u adsopt).",
-            ok=False,
+        part = payload.get("id_token", "").split(".")[1]
+        part += "=" * (-len(part) % 4)
+        email = _json.loads(base64.urlsafe_b64decode(part)).get("email", "").lower()
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+    from .auth_store import create_session, upsert_user
+
+    is_admin = email in ADMIN_EMAILS
+
+    if is_admin:
+        # Admin keeps the classic MCC zone: persist to env + rebuild global client
+        _persist_refresh_token(refresh)
+        upsert_user(email or "admin", refresh, zone="admin")
+        try:
+            from ..auth.google_ads_auth import GoogleAdsAuthenticator
+
+            auth = GoogleAdsAuthenticator(use_env=True)
+            if auth.test_connection():
+                _state["client"] = auth.get_client()
+                _state["mcc_id"] = auth.login_customer_id
+                logger.info("OAuth admin reconnect OK, MCC %s", _state["mcc_id"])
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("Admin reconnect after OAuth failed: %s", exc, exc_info=True)
+        title, body = (
+            "Connected (admin zone)!",
+            f"{email}: MCC access + Merchant Center granted. Token saved on the server.",
         )
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.error("Reconnect after OAuth failed: %s", exc, exc_info=True)
-        return page("Token saved, reconnect failed", str(exc), ok=False)
+    else:
+        if not email:
+            return page(
+                "Could not identify your Google account",
+                "No email in the id_token — try again.",
+                ok=False,
+            )
+        upsert_user(email, refresh, zone="user")
+        _user_states.pop(email, None)  # force rebuild with the fresh token
+        title, body = (
+            "Connected!",
+            f"{email}: your own ad accounts are now available — open the "
+            f"Dashboard and press Load Accounts. Merchant Center bucketing "
+            f"works with your merchants too.",
+        )
+
+    resp = page(title, body)
+    resp.set_cookie(
+        SESSION_COOKIE,
+        create_session(email or "admin"),
+        httponly=True,
+        max_age=30 * 86400,
+        samesite="lax",
+    )
+    return resp
 
 
 @app.get("/api/merchant/accounts")
-async def merchant_accounts():
-    """Merchant Center accounts reachable with the configured OAuth token."""
+async def merchant_accounts(request: Request):
+    """Merchant Center accounts reachable with the current zone's token."""
     from ..api.merchant_client import MerchantClient, MerchantError
 
+    ctx = _ctx(request)
     try:
-        return {"accounts": MerchantClient().authinfo()}
+        return {"accounts": MerchantClient(ctx.get("refresh_token")).authinfo()}
     except MerchantError as exc:
         return {"error": str(exc)}
 
@@ -607,13 +824,15 @@ async def merchant_accounts():
 async def merchant_bucketize(
     merchant_id: str,
     customer_id: str,
+    request: Request,
     days: int = 30,
     target_roas: float = 3.0,
     villain_cost: float = 10.0,
     zombie_impr: int = 10,
 ):
     """Join the Merchant feed with Ads performance and bucket every product."""
-    if _state["client"] is None:
+    ctx = _ctx(request)
+    if ctx["client"] is None:
         raise HTTPException(status_code=400, detail="Not connected.")
 
     from ..api.merchant_client import MerchantClient, MerchantError
@@ -621,13 +840,13 @@ async def merchant_bucketize(
 
     days = max(7, min(days, 180))
     try:
-        mc = MerchantClient()
+        mc = MerchantClient(ctx.get("refresh_token"))
         feed = mc.list_products(merchant_id)
         if not feed:
             return {"error": f"Merchant {merchant_id}: product feed is empty "
                              f"(or no access to this merchant)."}
         statuses = mc.list_statuses(merchant_id)
-        perf = product_performance(_state["client"], customer_id, days)
+        perf = product_performance(_client_for(ctx, customer_id), customer_id, days)
         data = bucketize(
             feed, statuses, perf,
             target_roas=target_roas,
@@ -641,7 +860,7 @@ async def merchant_bucketize(
         return {"error": str(exc)}
 
     account_name = next(
-        (a.get("name") for a in _state["accounts"] if a["id"] == customer_id),
+        (a.get("name") for a in ctx["accounts"] if a["id"] == customer_id),
         customer_id,
     )
     return {"merchant_id": merchant_id, "customer_id": customer_id,
@@ -649,10 +868,11 @@ async def merchant_bucketize(
 
 
 @app.get("/api/recommendations")
-async def get_all_recommendations():
+async def get_all_recommendations(request: Request):
     """Return all cached recommendations across all accounts."""
+    ctx = _ctx(request)
     all_recs = []
-    for customer_id, recs in _state["recommendations"].items():
+    for customer_id, recs in ctx["recommendations"].items():
         for rec in recs:
             all_recs.append(rec.model_dump())
     return {"recommendations": all_recs, "total": len(all_recs)}
