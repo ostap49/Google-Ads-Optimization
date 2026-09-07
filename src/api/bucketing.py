@@ -27,6 +27,7 @@ def product_performance(client, customer_id: str, days: int) -> Dict[str, Dict]:
     """Per-product Ads metrics (Shopping + PMax), keyed by lowercased item id."""
     query = f"""
         SELECT segments.product_item_id,
+               campaign.status,
                metrics.impressions, metrics.clicks, metrics.cost_micros,
                metrics.conversions, metrics.conversions_value
         FROM shopping_performance_view

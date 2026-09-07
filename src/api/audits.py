@@ -96,7 +96,10 @@ def run_pmax_assets(client, customer_id, days) -> Dict[str, Any]:
 
 def run_dgen_automation(client, customer_id, days) -> Dict[str, Any]:
     query = """
-        SELECT campaign.name, ad_group.name, ad_group_ad.ad.id,
+        SELECT campaign.name, campaign.status,
+               campaign.advertising_channel_type,
+               ad_group.name, ad_group.status,
+               ad_group_ad.ad.id, ad_group_ad.status,
                ad_group_ad.ad_group_ad_asset_automation_settings
         FROM ad_group_ad
         WHERE campaign.advertising_channel_type = 'DEMAND_GEN'
@@ -130,8 +133,12 @@ def run_dgen_automation(client, customer_id, days) -> Dict[str, Any]:
 
 def run_non_serving_keywords(client, customer_id, days) -> Dict[str, Any]:
     all_kw_query = """
-        SELECT campaign.name, ad_group.name,
+        SELECT campaign.name, campaign.status,
+               ad_group.name, ad_group.status,
                ad_group_criterion.criterion_id,
+               ad_group_criterion.type,
+               ad_group_criterion.status,
+               ad_group_criterion.negative,
                ad_group_criterion.keyword.text,
                ad_group_criterion.keyword.match_type
         FROM ad_group_criterion
@@ -182,7 +189,7 @@ def run_conversion_health(client, customer_id, days) -> Dict[str, Any]:
                conversion_action.status, conversion_action.primary_for_goal
         FROM conversion_action
         WHERE conversion_action.status = 'ENABLED'
-    """
+    """  # status is selected, so the v24 SELECT-clause rule is satisfied
     volume_query = f"""
         SELECT segments.conversion_action_name, metrics.all_conversions
         FROM customer
@@ -219,7 +226,9 @@ def run_conversion_health(client, customer_id, days) -> Dict[str, Any]:
 
 def run_search_term_waste(client, customer_id, days) -> Dict[str, Any]:
     query = f"""
-        SELECT campaign.name, ad_group.name, search_term_view.search_term,
+        SELECT campaign.name, campaign.status,
+               ad_group.name, ad_group.status,
+               search_term_view.search_term,
                metrics.clicks, metrics.cost_micros, metrics.conversions
         FROM search_term_view
         WHERE {_date_clause(days)}

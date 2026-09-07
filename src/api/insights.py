@@ -116,7 +116,7 @@ def geo_insight(client, customer_id: str, days: int) -> Dict[str, Any]:
 
     def fetch(clause):
         query = f"""
-            SELECT campaign.name,
+            SELECT campaign.name, campaign.status,
                    geographic_view.country_criterion_id,
                    segments.geo_target_region,
                    metrics.clicks, metrics.cost_micros,
@@ -186,7 +186,9 @@ def keyword_insight(client, customer_id: str, days: int) -> Dict[str, Any]:
 
     def fetch(clause):
         query = f"""
-            SELECT campaign.name, ad_group.name,
+            SELECT campaign.name, campaign.status,
+                   ad_group.name, ad_group.status,
+                   ad_group_criterion.status,
                    ad_group_criterion.keyword.text,
                    ad_group_criterion.keyword.match_type,
                    metrics.clicks, metrics.cost_micros,
@@ -234,7 +236,8 @@ def pmax_products_insight(client, customer_id: str, days: int) -> Dict[str, Any]
 
     def fetch(clause):
         query = f"""
-            SELECT campaign.name,
+            SELECT campaign.name, campaign.status,
+                   campaign.advertising_channel_type,
                    segments.product_item_id,
                    segments.product_title,
                    metrics.clicks, metrics.cost_micros,

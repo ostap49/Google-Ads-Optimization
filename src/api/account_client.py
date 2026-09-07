@@ -47,6 +47,7 @@ class AccountClient:
             ad_group.name,
             ad_group.status,
             campaign.id,
+            campaign.status,
             ad_group.type,
             ad_group.cpc_bid_micros,
             ad_group.target_cpa_micros,
