@@ -107,7 +107,14 @@ def stage4(acc):
     return acc
 
 
-STAGES = {"1": [stage1], "2": [stage2], "3": [stage3], "4": [stage4]}
+def stage5(acc):
+    acc = acc or stage1(None)
+    call("get_account_brief", customer_id=acc)
+    call("get_decision_log", customer_id=acc)
+    return acc
+
+
+STAGES = {"1": [stage1], "2": [stage2], "3": [stage3], "4": [stage4], "5": [stage5]}
 
 
 def main():

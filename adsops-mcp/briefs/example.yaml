@@ -1,0 +1,22 @@
+# Optional hand-written brief. Name the file <customer_id>.yaml or <alias>.yaml.
+# Values set later with update_account_brief (stored in SQLite) override this file.
+business_type: ecommerce
+description: Furniture store, Lviv + nationwide delivery
+margin_pct: 35
+kpi: roas
+target_roas: 5.0          # ratio: 5.0 = 500%
+target_cpa: null
+monthly_budget: 120000    # account currency (UAH)
+campaign_budgets: {}      # {"<campaign_id>": monthly amount}
+main_products: [дивани, ліжка, шафи]
+brand_terms: [stryi, стрий меблі]
+competitor_terms: [rozetka, епіцентр]
+irrelevant_terms: [безкоштовно, своїми руками]
+languages: [uk, ru]
+geo: [UA]
+seasonality: "Peak: Nov (Black Friday), Mar-Apr; low: Jul-Aug"
+brand_impression_share_min: 0.9
+brand_campaign_match: brand
+rules:
+  - never bid on competitor terms
+  - brand campaign must keep impression share above 90%

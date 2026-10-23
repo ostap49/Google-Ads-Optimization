@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 from typing import Any
 
+import yaml
+
 from core import db
+from core.config import ROOT
 from core.fmt import clean_id
+
+BRIEFS_DIR = ROOT / "briefs"
 
 BRIEF_TEMPLATE: dict[str, Any] = {
     "business_type": None,          # "ecommerce" | "services" | "leadgen" | "local" | free text
@@ -40,13 +46,29 @@ def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _yaml_brief(cid: str) -> tuple[dict[str, Any], Path | None]:
+    """Optional hand-written briefs/<customer_id>.yaml or briefs/<alias>.yaml (DB values win)."""
+    from core.accounts import alias_for
+    for name in (cid, alias_for(cid)):
+        if not name:
+            continue
+        for ext in (".yaml", ".yml"):
+            p = BRIEFS_DIR / f"{name}{ext}"
+            if p.exists():
+                return yaml.safe_load(p.read_text(encoding="utf-8")) or {}, p
+    return {}, None
+
+
 def get_brief(customer_id: str) -> dict[str, Any]:
     cid = clean_id(customer_id)
     with db.connect() as conn:
         row = conn.execute("SELECT data, updated_at FROM brief WHERE customer_id=?", (cid,)).fetchone()
-    data = _deep_merge(BRIEF_TEMPLATE, db.loads(row["data"]) if row else {})
+    from_file, path = _yaml_brief(cid)
+    data = _deep_merge(_deep_merge(BRIEF_TEMPLATE, from_file), db.loads(row["data"]) if row else {})
     data["_updated_at"] = row["updated_at"] if row else None
-    data["_exists"] = bool(row)
+    data["_exists"] = bool(row) or bool(from_file)
+    if path:
+        data["_yaml_file"] = str(path)
     return data
 
 
