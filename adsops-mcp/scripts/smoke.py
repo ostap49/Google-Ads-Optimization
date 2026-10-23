@@ -114,7 +114,20 @@ def stage5(acc):
     return acc
 
 
-STAGES = {"1": [stage1], "2": [stage2], "3": [stage3], "4": [stage4], "5": [stage5]}
+def stage6(acc):
+    acc = acc or stage1(None)
+    call("list_playbooks")
+    call("get_playbook", name="weekly_review", customer_id=acc, lang="uk")
+    return acc
+
+
+def stage7(acc):
+    acc = acc or stage1(None)
+    call("generate_report", customer_id=acc, period="LAST_MONTH", lang="uk", xlsx=True)
+    return acc
+
+
+STAGES = {"1": [stage1], "2": [stage2], "3": [stage3], "4": [stage4], "5": [stage5], "6": [stage6], "7": [stage7]}
 
 
 def main():
