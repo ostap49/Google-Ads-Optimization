@@ -1,0 +1,7 @@
+# Copy to google-ads.yaml (gitignored) or run `python auth.py` to generate it.
+developer_token: INSERT_DEVELOPER_TOKEN        # Google Ads UI (MCC) -> Admin -> API Center
+client_id: INSERT_OAUTH_CLIENT_ID.apps.googleusercontent.com
+client_secret: INSERT_OAUTH_CLIENT_SECRET
+refresh_token: INSERT_REFRESH_TOKEN            # written by auth.py
+login_customer_id: "1234567890"                # your MCC ID, digits only
+use_proto_plus: true

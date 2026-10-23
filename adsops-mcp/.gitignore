@@ -1,0 +1,7 @@
+.env
+google-ads.yaml
+config.yaml
+client_secret*.json
+data/
+__pycache__/
+.pytest_cache/
