@@ -321,7 +321,8 @@ class Gads:
             except grpc.RpcError as ex:
                 code = ex.code() if hasattr(ex, "code") else None
                 if code not in RETRYABLE_GRPC or attempt >= MAX_RETRIES:
-                    raise GadsError(f"{what} failed: {code}: {getattr(ex, 'details', lambda: ex)()}") from None
+                    detail = ex.details() if hasattr(ex, "details") else str(ex)
+                    raise GadsError(f"{what} failed: {code}: {detail}") from None
                 self._sleep(attempt, 0, what, {str(code)})
             attempt += 1
 

@@ -80,7 +80,34 @@ def stage3(acc):
     return acc
 
 
-STAGES = {"1": [stage1], "2": [stage2], "3": [stage3]}
+def stage4(acc):
+    """validate_only proposals for write tools (rejected afterwards). Nothing is applied."""
+    acc = acc or stage1(None)
+    camps = call("get_campaign_performance", customer_id=acc, channel_types=["SEARCH"], limit=1, compare=False)
+    if not camps.get("rows"):
+        print("no Search campaign — skipping write validation")
+        return acc
+    c = camps["rows"][0]
+    kws = call("get_adgroup_and_keyword_performance", customer_id=acc, campaign_id=c["campaign_id"], limit=1)
+    pids = []
+    for name, kw in [
+        ("propose_add_negative_keywords", {"keywords": ["adsops smoke test zzzz"], "level": "campaign", "campaign_ids": [c["campaign_id"]]}),
+        ("propose_set_status", {"entity_type": "campaign", "ids": [c["campaign_id"]], "status": "PAUSED"}),
+        ("propose_create_callouts", {"callouts": ["Adsops test 1", "Adsops test 2"], "campaign_ids": [c["campaign_id"]]}),
+    ]:
+        out = call(name, customer_id=acc, reason="smoke test — will be rejected", **kw)
+        pids.append(out.get("proposal_id"))
+    if kws.get("rows"):
+        k = kws["rows"][0]
+        out = call("propose_create_rsa", customer_id=acc, ad_group_id=k["ad_group_id"], final_url="https://example.com",
+                   headlines=["Adsops тест 1", "Adsops тест 2", "Adsops тест 3"], descriptions=["Тестовий опис один.", "Тестовий опис два."])
+        pids.append(out.get("proposal_id"))
+    for pid in filter(None, pids):
+        call("reject_proposal", proposal_id=pid, reason="smoke test")
+    return acc
+
+
+STAGES = {"1": [stage1], "2": [stage2], "3": [stage3], "4": [stage4]}
 
 
 def main():
