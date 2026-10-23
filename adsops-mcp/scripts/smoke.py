@@ -64,7 +64,23 @@ def stage2(acc):
     return acc
 
 
-STAGES = {"1": [stage1], "2": [stage2]}
+def stage3(acc):
+    """Propose (validate_only) a +5% budget change on the top-spend campaign, show it, then reject it."""
+    acc = acc or stage1(None)
+    perf = call("get_campaign_performance", customer_id=acc, limit=1, compare=False, include_paused=False)
+    if not perf.get("rows"):
+        print("no campaigns with spend — skipping")
+        return acc
+    top = perf["rows"][0]
+    p = call("propose_update_campaign_budget", customer_id=acc, campaign_id=top["campaign_id"], change_pct=5,
+             reason="smoke test — will be rejected")
+    if p.get("proposal_id"):
+        call("reject_proposal", proposal_id=p["proposal_id"], reason="smoke test")
+    call("list_proposals", customer_id=acc, limit=5)
+    return acc
+
+
+STAGES = {"1": [stage1], "2": [stage2], "3": [stage3]}
 
 
 def main():
