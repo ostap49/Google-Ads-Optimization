@@ -41,7 +41,30 @@ def stage1(acc):
     return acc
 
 
-STAGES = {"1": [stage1]}
+def stage2(acc):
+    acc = acc or stage1(None)
+    call("get_account_overview", customer_id=acc, date_range="LAST_30_DAYS")
+    call("get_campaign_performance", customer_id=acc, limit=10)
+    call("get_campaign_performance", customer_id=acc, segment="device", limit=10)
+    call("get_adgroup_and_keyword_performance", customer_id=acc, limit=10)
+    call("get_search_terms", customer_id=acc, limit=10)
+    call("ngram_analysis", customer_id=acc, limit=10, zero_conv_only=True)
+    call("pmax_insights", customer_id=acc, limit=5)
+    call("get_shopping_products", customer_id=acc, limit=10)
+    call("analyze_wasted_spend", customer_id=acc, limit=15)
+    call("budget_pacing", customer_id=acc)
+    call("audit_conversion_tracking", customer_id=acc)
+    call("account_audit", customer_id=acc)
+    call("get_change_history", customer_id=acc, days=7, limit=10)
+    call("get_recommendations", customer_id=acc, limit=10)
+    call("keyword_research", customer_id=acc, seed_keywords=["купити диван"], limit=15)
+    call("forecast", customer_id=acc, keywords=["купити диван", "[кутовий диван]"], max_cpc=15)
+    call("anomaly_scan", customer_id=acc)
+    call("budget_pacing", customer_id="all")
+    return acc
+
+
+STAGES = {"1": [stage1], "2": [stage2]}
 
 
 def main():

@@ -127,6 +127,40 @@ def select_fields(query: str) -> list[str]:
     return [f.strip() for f in m.group(1).split(",") if f.strip()]
 
 
+_CLAUSE_RE = re.compile(r"\bWHERE\b(.*?)(?=\bORDER\s+BY\b|\bLIMIT\b|\bPARAMETERS\b|$)", re.I | re.S)
+_FIELD_RE = re.compile(r"\b([a-z_]+(?:\.[a-z_0-9]+)+)\b")
+
+
+# Fields that are filter-only (or whose resource requires them as a filter) — never auto-selected.
+FILTER_ONLY = {
+    "campaign_search_term_insight.campaign_id",
+    "customer_search_term_insight.id",
+}
+
+
+def ensure_where_fields_selected(query: str) -> str:
+    """API v24+ rejects filters on attribute fields that are not selected (EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE).
+
+    Appends such resource-attribute fields to SELECT. Segments/metrics are left alone: adding a segment
+    would change row granularity, and metrics filters are accepted as-is.
+    """
+    m = _CLAUSE_RE.search(query)
+    if not m:
+        return query
+    selected = set(select_fields(query))
+    where = re.sub(r"'(?:[^'\\]|\\.)*'", "''", m.group(1))
+    missing = []
+    for f in _FIELD_RE.findall(where):
+        if f.split(".")[0] in {"segments", "metrics"} or f in selected or f in missing or f in FILTER_ONLY:
+            continue
+        missing.append(f)
+    if not missing:
+        return query
+    sel = _SELECT_RE.match(query)
+    insert_at = sel.end(1)
+    return query[:insert_at] + ", " + ", ".join(missing) + query[insert_at:]
+
+
 def _attr(obj: Any, name: str) -> Any:
     try:
         return getattr(obj, name)
@@ -300,6 +334,7 @@ class Gads:
     # -- reads ----------------------------------------------------------------
     def search_raw(self, customer_id: str, query: str) -> list[Any]:
         cid = clean_id(customer_id)
+        query = ensure_where_fields_selected(query)
 
         def run() -> list[Any]:
             svc = self.service("GoogleAdsService")
@@ -312,7 +347,7 @@ class Gads:
         return self._retry(run, f"search({cid})")
 
     def search(self, customer_id: str, query: str) -> list[dict[str, Any]]:
-        fields = select_fields(query)
+        fields = select_fields(ensure_where_fields_selected(query))
         return [flatten_row(r, fields) for r in self.search_raw(customer_id, query)]
 
     def cached_search(self, customer_id: str, query: str, ttl: float = CACHE_TTL) -> list[dict[str, Any]]:

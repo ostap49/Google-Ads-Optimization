@@ -45,12 +45,17 @@ class FakeGads:
     def route(self, pattern, rows):
         self.routes.insert(0, (pattern, rows))
 
+    default = None  # callable(query) -> rows when no route matches
+
     def search(self, customer_id, query):
+        from tests.gaql_check import invalid_fields
+        bad = invalid_fields(query)
+        assert not bad, f"invalid GAQL fields {bad} in query: {query}"
         self.queries.append(query)
         for pattern, rows in self.routes:
             if re.search(pattern, query, re.S | re.I):
                 return [dict(r) for r in (rows(query) if callable(rows) else rows)]
-        return []
+        return self.default(query) if self.default else []
 
     def cached_search(self, customer_id, query, ttl=3600):
         return self.search(customer_id, query)
@@ -77,6 +82,14 @@ class FakeGads:
         from gads.client import MutateResult
         self.mutates.append({"customer_id": customer_id, "recommendations": resource_names})
         return MutateResult(resource_names=list(resource_names), request_id="req-rec")
+
+
+@pytest.fixture
+def auto(fake):
+    """FakeGads that answers every query with descriptor-generated rows."""
+    from tests.fakedata import rows_for
+    fake.default = rows_for
+    return fake
 
 
 @pytest.fixture
