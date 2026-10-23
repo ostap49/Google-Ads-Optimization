@@ -1,0 +1,31 @@
+# Copy to config.yaml. Guardrails apply at propose time AND again at apply time.
+server:
+  dry_run: false            # true = apply_proposal only validates (same as ADSOPS_DRY_RUN=true)
+  require_elicitation: false # true = refuse to apply unless the client can show an approval dialog
+  default_limit: 25         # rows returned by list-style tools unless `limit` is passed
+  api_version: v26
+
+defaults:
+  max_daily_budget: null        # hard ceiling per campaign daily budget (account currency)
+  max_budget_change_pct: 30     # per apply
+  max_bid_change_pct: 30        # keyword CPC bids, device / schedule modifiers
+  max_target_change_pct: 20     # tCPA / tROAS within the same strategy
+  forbidden_actions: []         # e.g. [update_bid_strategy, apply_recommendation]
+  protected_campaign_ids: []
+  max_operations_per_proposal: 1000
+  proposal_ttl_hours: 24
+
+# Per-account overrides — key by customer ID (with or without dashes) or alias.
+accounts:
+  stryi:
+    max_daily_budget: 5000
+    protected_campaign_ids: ["12345678901"]   # e.g. the brand campaign
+  "123-456-7890":
+    forbidden_actions: [create_pmax_campaign]
+    max_budget_change_pct: 15
+
+thresholds:
+  waste_cpa_multiplier: 2.0   # wasted spend = cost >= 2x target CPA with 0 conversions
+  min_waste_spend: 10.0       # never flag below this amount
+  anomaly_z: 2.5
+  anomaly_min_pct: 25.0

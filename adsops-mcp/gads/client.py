@@ -280,11 +280,17 @@ class Gads:
                 if self._client is None:
                     from google.ads.googleads.client import GoogleAdsClient
 
+                    import os
+
                     path = self.settings.google_ads_yaml
                     if path.exists():
                         self._client = GoogleAdsClient.load_from_storage(str(path), version=self.settings.api_version)
-                    else:
+                    elif os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN") and os.getenv("GOOGLE_ADS_REFRESH_TOKEN"):
+                        os.environ.setdefault("GOOGLE_ADS_USE_PROTO_PLUS", "true")
                         self._client = GoogleAdsClient.load_from_env(version=self.settings.api_version)
+                    else:
+                        raise GadsError(f"Google Ads credentials not found: {path} does not exist. "
+                                        "Copy google-ads.yaml.example and run `python auth.py` (see README).")
         return self._client
 
     @property

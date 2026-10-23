@@ -37,8 +37,8 @@ def run_gaql(customer_id: str, query: str, limit: int = 50, sort_by: str | None 
     sibling (metrics.cost_micros -> metrics.cost). Returns top `limit` rows, optionally sorted by `sort_by`
     (a field name as it appears in the rows, e.g. "metrics.cost").
     """
-    g, cid, info, _ = ctx(customer_id)
     q = validate_gaql(query, min(int(max_rows), MAX_ROWS))
+    g, cid, info, _ = ctx(customer_id)
     rows = [money_row(r) for r in g.search(cid, q)]
     out = compact(rows, limit=limit, sort_by=sort_by)
     out.update(account_header(cid, info))
