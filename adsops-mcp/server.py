@@ -45,6 +45,7 @@ TOOL_MODULES = [
     "tools.writes",
     "memory.tools",
     "reports.tools",
+    "skills.prompts",
 ]
 
 INSTRUCTIONS = """\
@@ -89,13 +90,8 @@ def build_server() -> _Server:
                 open_world_hint=True,
             ),
         )(spec.fn)
-    try:
-        from skills.prompts import register_prompts
-    except ModuleNotFoundError as ex:
-        if ex.name not in {"skills.prompts", "skills"}:
-            raise
-    else:
-        register_prompts(mcp)
+    from skills.prompts import register_prompts
+    register_prompts(mcp)
     return mcp
 
 
