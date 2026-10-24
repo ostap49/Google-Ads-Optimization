@@ -93,6 +93,15 @@ Every request needs `Authorization: Bearer <token>`. DNS-rebinding protection is
 OAuth rather than a static bearer header, so exposing adsops to claude.ai will need an OAuth front (e.g. a reverse
 proxy with OAuth) in front of this endpoint. The bearer mode covers Claude Code and other header-capable clients today.
 
+**Deploy to a VPS** (Ubuntu/Debian, HTTPS via Caddy, systemd, daily monitor timer):
+```bash
+curl -fsSLo install.sh https://raw.githubusercontent.com/ostap49/Google-Ads-Optimization/claude/inspiring-ritchie-a0s99k/adsops-mcp/deploy/install.sh
+sudo DOMAIN=adspire.ostap49.marketing bash install.sh     # re-run to update
+```
+Then copy `google-ads.yaml` (made with `python auth.py` on your laptop) to `/opt/adsops/Google-Ads-Optimization/adsops-mcp/`
+and `sudo systemctl restart adsops-mcp`. The DNS A record for the domain must point at the server and ports 80/443 must be
+free for Caddy (stop nginx/apache first, or proxy `127.0.0.1:8765` from your existing web server instead).
+
 ## 3. How writes work (safety layer)
 
 1. `propose_*` reads the current state, checks guardrails, stores a **ChangeProposal** (diff *before → after*,
