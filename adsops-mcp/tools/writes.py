@@ -152,12 +152,18 @@ def propose_create_pmax_campaign(customer_id: str, name: str, daily_budget: floa
                                  languages: list[str] | None = None, merchant_center_id: str | None = None,
                                  feed_label: str | None = None, audience_signal: dict[str, Any] | None = None,
                                  asset_automation_opt_out: list[str] | None = None,
+                                 listing_filter: dict[str, Any] | None = None,
                                  reason: str | None = None) -> dict[str, Any]:
     """Create a PMax campaign + asset group, ALWAYS PAUSED, in one atomic request.
     asset_group: {"name", "final_url", "business_name" (<=25), "headlines" (3-15, <=30), "long_headlines" (1-5, <=90),
     "descriptions" (2-5, <=90, one <=60), "marketing_images" (1.91:1), "square_images" (1:1), "portrait_images" (4:5),
     "logos" (1:1), "landscape_logos" (4:1) — local paths or URLs, "youtube_video_ids", "path1", "path2"}.
-    merchant_center_id (+ feed_label) adds the feed and an all-products listing group.
+    asset_group.existing_assets: [{"asset": id | resource name, "field_type": "HEADLINE" | "LONG_HEADLINE" | "DESCRIPTION" |
+    "BUSINESS_NAME" | "MARKETING_IMAGE" | "SQUARE_MARKETING_IMAGE" | "LOGO" | ... | "YOUTUBE_VIDEO"}] — link assets that
+    already exist in the account (e.g. copied from another PMax) instead of uploading; they count toward the minimums.
+    merchant_center_id (+ feed_label) adds the feed; listing group = all products unless listing_filter is set.
+    listing_filter: {"dimension": "custom_label_0".."custom_label_4", "include": [values]} -> only those products, or
+    {"dimension": ..., "exclude": [values]} -> all products except those (new/unlabelled products are included).
     audience_signal: {"search_themes": [...], "audience_ids": [...]}.
     asset_automation_opt_out: e.g. ["TEXT_ASSET_AUTOMATION", "GENERATE_IMAGE_ENHANCEMENT", "GENERATE_ENHANCED_YOUTUBE_VIDEOS"].
     bidding: MAXIMIZE_CONVERSION_VALUE (target_roas?) | MAXIMIZE_CONVERSIONS (target_cpa?)."""
@@ -165,7 +171,7 @@ def propose_create_pmax_campaign(customer_id: str, name: str, daily_budget: floa
                           {"name": name, "daily_budget": daily_budget, "asset_group": asset_group, "bidding": bidding,
                            "geo": geo, "languages": languages, "merchant_center_id": merchant_center_id,
                            "feed_label": feed_label, "audience_signal": audience_signal,
-                           "asset_automation_opt_out": asset_automation_opt_out}, reason)
+                           "asset_automation_opt_out": asset_automation_opt_out, "listing_filter": listing_filter}, reason)
 
 
 @tool(read_only=False, title="Propose: new Demand Gen campaign (paused)")

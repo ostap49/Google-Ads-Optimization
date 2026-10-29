@@ -223,6 +223,88 @@ PMAX_TEXT = {"headlines": ("HEADLINE", 3, 15, 30), "long_headlines": ("LONG_HEAD
              "descriptions": ("DESCRIPTION", 2, 5, 90)}
 PMAX_IMAGES = {"marketing_images": "MARKETING_IMAGE", "square_images": "SQUARE_MARKETING_IMAGE",
                "portrait_images": "PORTRAIT_MARKETING_IMAGE", "logos": "LOGO", "landscape_logos": "LANDSCAPE_LOGO"}
+EXISTING_ASSET_FIELDS = {f for f, *_ in PMAX_TEXT.values()} | set(PMAX_IMAGES.values()) | {"BUSINESS_NAME", "YOUTUBE_VIDEO"}
+LABEL_INDEX = {f"custom_label_{i}": f"INDEX{i}" for i in range(5)}
+
+
+def _listing_filter(lf: dict[str, Any] | None, merchant: Any) -> dict[str, Any] | None:
+    """{"dimension": "custom_label_0", "include": [...]} or {..., "exclude": [...]} -> normalized spec.
+    include: only these label values serve. exclude: everything except these values serves."""
+    if not lf:
+        return None
+    if not merchant:
+        raise ValueError("listing_filter requires merchant_center_id")
+    dim = str(lf.get("dimension") or "").strip().lower()
+    if dim not in LABEL_INDEX:
+        raise ValueError(f"listing_filter.dimension must be one of {sorted(LABEL_INDEX)}")
+    inc = [str(v).strip().lower() for v in lf.get("include") or [] if str(v).strip()]
+    exc = [str(v).strip().lower() for v in lf.get("exclude") or [] if str(v).strip()]
+    if bool(inc) == bool(exc):
+        raise ValueError("listing_filter: set exactly one of 'include' or 'exclude' (non-empty)")
+    vals = inc or exc
+    if len(set(vals)) != len(vals):
+        raise ValueError("listing_filter: duplicate values")
+    return {"dimension": dim, "mode": "include" if inc else "exclude", "values": vals}
+
+
+def _existing_assets(cid: str, items: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+    """[{"asset": id | resource name, "field_type": "HEADLINE"...}] -> linked as-is, nothing re-uploaded."""
+    out: list[dict[str, str]] = []
+    for it in items or []:
+        ft = str(it.get("field_type") or "").upper()
+        if ft not in EXISTING_ASSET_FIELDS:
+            raise ValueError(f"existing_assets: field_type '{ft}' not allowed ({sorted(EXISTING_ASSET_FIELDS)})")
+        a = str(it.get("asset") or "").strip()
+        if not a:
+            raise ValueError("existing_assets: 'asset' (id or resource name) required")
+        rn = a if a.startswith("customers/") else f"customers/{cid}/assets/{int(a)}"
+        if not rn.startswith(f"customers/{cid}/assets/"):
+            raise ValueError(f"existing_assets: {rn} does not belong to customer {cid}")
+        if (rn, ft) not in {(o["asset"], o["field_type"]) for o in out}:
+            out.append({"asset": rn, "field_type": ft})
+    return out
+
+
+def _listing_group_ops(g, cid: str, ag_rn: str, lf: dict[str, Any] | None) -> list[Any]:
+    """Listing-group tree for a retail asset group. No filter -> single all-products UNIT_INCLUDED node.
+    With a label filter -> SUBDIVISION root + one UNIT per value + 'everything else' UNIT (opposite state)."""
+    def node(rn: str | None, type_: str, parent: str | None = None, value: str | None = None, index: str | None = None):
+        mm = mop(g)
+        lg = mm.asset_group_listing_group_filter_operation.create
+        if rn:
+            lg.resource_name = rn
+        lg.asset_group = ag_rn
+        lg.type_ = enum(g, "ListingGroupFilterTypeEnum", type_)
+        lg.listing_source = enum(g, "ListingGroupFilterListingSourceEnum", "SHOPPING")
+        if parent:
+            lg.parent_listing_group_filter = parent
+        if index:
+            attr = lg.case_value.product_custom_attribute
+            attr.index = enum(g, "ListingGroupFilterCustomAttributeIndexEnum", index)
+            if value is not None:
+                attr.value = value
+        return mm
+
+    if not lf:
+        return [node(None, "UNIT_INCLUDED")]
+    ag_id = ag_rn.rsplit("/", 1)[1]
+    root = f"customers/{cid}/assetGroupListingGroupFilters/{ag_id}~-1"
+    idx = LABEL_INDEX[lf["dimension"]]
+    listed, rest = ("UNIT_INCLUDED", "UNIT_EXCLUDED") if lf["mode"] == "include" else ("UNIT_EXCLUDED", "UNIT_INCLUDED")
+    ops = [node(root, "SUBDIVISION")]
+    ops += [node(None, listed, root, v, idx) for v in lf["values"]]
+    ops.append(node(None, rest, root, None, idx))  # "everything else" for this dimension
+    return ops
+
+
+def _describe_filter(lf: dict[str, Any] | None, merchant: Any) -> str | None:
+    if not merchant:
+        return None
+    if not lf:
+        return "all products"
+    vals = ", ".join(lf["values"])
+    return (f"only {lf['dimension']} in [{vals}]" if lf["mode"] == "include"
+            else f"all products except {lf['dimension']} in [{vals}]")
 
 
 @register
@@ -240,12 +322,19 @@ class CreatePmaxCampaign(ChangeSpec):
         bidding = _bidding(params, ("MAXIMIZE_CONVERSION_VALUE", "MAXIMIZE_CONVERSIONS"))
         geos, langs = _targeting(g, cid, params)
         ag = params.get("asset_group") or {}
+        merchant = params.get("merchant_center_id")
+        lf = _listing_filter(params.get("listing_filter"), merchant)
+        existing = _existing_assets(cid, ag.get("existing_assets"))
+        ex_count: dict[str, int] = {}
+        for e in existing:
+            ex_count[e["field_type"]] = ex_count.get(e["field_type"], 0) + 1
         errors: list[str] = []
         text: dict[str, list[str]] = {}
         for key, (field, lo, hi, mx) in PMAX_TEXT.items():
             vals = [str(v) for v in ag.get(key) or []]
-            if not lo <= len(vals) <= hi:
-                errors.append(f"{key}: need {lo}-{hi} (got {len(vals)})")
+            total = len(vals) + ex_count.get(field, 0)
+            if not lo <= total <= hi:
+                errors.append(f"{key}: need {lo}-{hi} incl. existing_assets (got {total})")
             for v in vals:
                 if visible_length(v) > mx:
                     errors.append(f"{key}: '{v}' is {visible_length(v)} chars (max {mx})")
@@ -259,8 +348,10 @@ class CreatePmaxCampaign(ChangeSpec):
         if any("!" in h for h in text["headlines"]):
             errors.append("headlines cannot contain '!'")
         business_name = ag.get("business_name") or ""
-        if not business_name or visible_length(business_name) > 25:
-            errors.append("business_name required, max 25 chars")
+        if business_name and visible_length(business_name) > 25:
+            errors.append("business_name max 25 chars")
+        elif not business_name and not ex_count.get("BUSINESS_NAME"):
+            errors.append("business_name required (or an existing BUSINESS_NAME asset)")
         final_url = ag.get("final_url")
         if not final_url or not str(final_url).startswith(("http://", "https://")):
             errors.append("asset_group.final_url required")
@@ -271,15 +362,14 @@ class CreatePmaxCampaign(ChangeSpec):
                     images.append(inspect_image(str(src), field))
                 except ValueError as ex:
                     errors.append(str(ex))
-        have = {i["field_type"] for i in images}
-        merchant = params.get("merchant_center_id")
+        have = {i["field_type"] for i in images} | set(ex_count)
         for need in ("MARKETING_IMAGE", "SQUARE_MARKETING_IMAGE", "LOGO"):
             if need not in have:
                 (guard.warn if merchant else errors.append)(f"missing {need} (min 1)")
         if errors:
             raise ValueError("PMax validation failed:\n- " + "\n- ".join(errors))
         videos = [str(v) for v in ag.get("youtube_video_ids") or []]
-        if not videos:
+        if not videos and not ex_count.get("YOUTUBE_VIDEO"):
             guard.warn("No YouTube video — Google will auto-generate one from your images unless you add a video.")
         signals = {"search_themes": [str(s) for s in (params.get("audience_signal") or {}).get("search_themes") or []][:25],
                    "audience_ids": [str(a) for a in (params.get("audience_signal") or {}).get("audience_ids") or []]}
@@ -289,16 +379,18 @@ class CreatePmaxCampaign(ChangeSpec):
         p = {"name": name, "daily_budget": budget, "bidding": bidding, "geo": geos, "languages": langs,
              "merchant_center_id": int(merchant) if merchant else None, "feed_label": params.get("feed_label"),
              "asset_group": {"name": ag.get("name") or f"{name} - AG1", "final_url": final_url, "business_name": business_name,
-                             "path1": ag.get("path1"), "path2": ag.get("path2"), **text, "images": images, "videos": videos},
-             "signals": signals, "asset_automation_opt_out": opt_out}
+                             "path1": ag.get("path1"), "path2": ag.get("path2"), **text, "images": images, "videos": videos,
+                             "existing_assets": existing},
+             "listing_filter": lf, "signals": signals, "asset_automation_opt_out": opt_out}
         diff = [{"resource": f"new campaign '{name}'", "field": "create", "before": None,
                  "after": {"status": "PAUSED", "channel": "PERFORMANCE_MAX", "daily_budget": budget, "bidding": bidding,
                            "geo": geos, "languages": langs, "merchant_center_id": p["merchant_center_id"],
-                           "listing_group": "all products" if merchant else None, "asset_automation_opt_out": opt_out}},
+                           "listing_group": _describe_filter(lf, merchant), "asset_automation_opt_out": opt_out}},
                 {"resource": f"new asset group '{p['asset_group']['name']}'", "field": "create", "before": None,
                  "after": {"final_url": final_url, "headlines": len(text["headlines"]), "long_headlines": len(text["long_headlines"]),
                            "descriptions": len(text["descriptions"]), "images": {f: sum(1 for i in images if i["field_type"] == f) for f in have},
-                           "videos": len(videos), "search_themes": signals["search_themes"], "audiences": signals["audience_ids"]}}]
+                           "videos": len(videos), "existing_assets_linked": ex_count,
+                           "search_themes": signals["search_themes"], "audiences": signals["audience_ids"]}}]
         return Prepared(params=p, diff=diff, impact={"max_monthly_spend_when_enabled": round(budget * 30.4, 2)},
                         summary=f"Create PAUSED Performance Max '{name}' (budget {budget}/day)")
 
@@ -344,7 +436,10 @@ class CreatePmaxCampaign(ChangeSpec):
         for key, (field, *_rest) in PMAX_TEXT.items():
             for v in ag[key]:
                 text_asset(v, field)
-        text_asset(ag["business_name"], "BUSINESS_NAME")
+        if ag.get("business_name"):
+            text_asset(ag["business_name"], "BUSINESS_NAME")
+        for e in ag.get("existing_assets") or []:
+            links.append((e["asset"], e["field_type"]))
         for i, img in enumerate(ag["images"]):
             mm = mop(g)
             a = mm.asset_operation.create
@@ -381,12 +476,7 @@ class CreatePmaxCampaign(ChangeSpec):
             link.field_type = enum(g, "AssetFieldTypeEnum", field)
             ops.append(mm)
         if params.get("merchant_center_id"):
-            mm = mop(g)
-            lg = mm.asset_group_listing_group_filter_operation.create
-            lg.asset_group = ag_rn
-            lg.type_ = enum(g, "ListingGroupFilterTypeEnum", "UNIT_INCLUDED")
-            lg.listing_source = enum(g, "ListingGroupFilterListingSourceEnum", "SHOPPING")
-            ops.append(mm)
+            ops += _listing_group_ops(g, cid, ag_rn, params.get("listing_filter"))
         for theme in params["signals"]["search_themes"]:
             mm = mop(g)
             s = mm.asset_group_signal_operation.create

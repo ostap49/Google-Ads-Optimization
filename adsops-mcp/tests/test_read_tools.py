@@ -23,6 +23,7 @@ def _ok(out):
     ("get_search_terms", {}),
     ("ngram_analysis", {}),
     ("pmax_insights", {}),
+    ("get_pmax_reusable_assets", {"campaign_id": "111"}),
     ("get_shopping_products", {}),
     ("analyze_wasted_spend", {}),
     ("budget_pacing", {"customer_id": CID}),
