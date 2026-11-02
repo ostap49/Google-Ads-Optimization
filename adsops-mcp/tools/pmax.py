@@ -127,3 +127,43 @@ def pmax_insights(customer_id: str, campaign_id: str | None = None, date_range: 
     if errors:
         out["section_errors"] = errors
     return out
+
+
+REUSABLE_FIELDS = ("HEADLINE", "LONG_HEADLINE", "DESCRIPTION", "BUSINESS_NAME", "MARKETING_IMAGE",
+                   "SQUARE_MARKETING_IMAGE", "PORTRAIT_MARKETING_IMAGE", "LOGO", "LANDSCAPE_LOGO", "YOUTUBE_VIDEO")
+
+
+@tool(title="PMax assets for reuse")
+def get_pmax_reusable_assets(customer_id: str, campaign_id: str, asset_group_id: str | None = None) -> dict[str, Any]:
+    """Assets linked to a PMax campaign's asset groups, de-duplicated per (asset, field_type), in the exact
+    shape propose_create_pmax_campaign accepts as asset_group.existing_assets — so a new PMax can reuse the
+    same headlines / images / logo / business name without re-uploading. Removed links are skipped."""
+    g, cid, info, _ = ctx(customer_id)
+    cond = f"campaign.id = {int(campaign_id)}"
+    if asset_group_id:
+        cond += f" AND asset_group.id = {int(asset_group_id)}"
+    rows = g.search(cid, f"""
+        SELECT asset_group.id, asset_group.name, asset_group_asset.field_type, asset_group_asset.status,
+               asset.resource_name, asset.type, asset.text_asset.text, asset.image_asset.full_size.width_pixels,
+               asset.image_asset.full_size.height_pixels, asset.youtube_video_asset.youtube_video_id
+        FROM asset_group_asset
+        WHERE {cond} AND asset_group_asset.status != 'REMOVED'""")
+    seen: set[tuple[str, str]] = set()
+    existing: list[dict[str, str]] = []
+    preview: dict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        ft = str(row.get("asset_group_asset.field_type") or "")
+        rn = str(row.get("asset.resource_name") or "")
+        if ft not in REUSABLE_FIELDS or not rn or (rn, ft) in seen:
+            continue
+        seen.add((rn, ft))
+        existing.append({"asset": rn, "field_type": ft})
+        label = (row.get("asset.text_asset.text")
+                 or row.get("asset.youtube_video_asset.youtube_video_id")
+                 or (f"{row.get('asset.image_asset.full_size.width_pixels')}x{row.get('asset.image_asset.full_size.height_pixels')}"
+                     if row.get("asset.image_asset.full_size.width_pixels") else rn.rsplit("/", 1)[-1]))
+        preview[ft].append(str(label))
+    counts = Counter(e["field_type"] for e in existing)
+    return {**account_header(cid, info), "campaign_id": str(campaign_id), "counts": dict(counts),
+            "preview": dict(preview), "existing_assets": existing,
+            "note": "PMax max per asset group: 15 headlines, 5 long headlines, 5 descriptions, 20 images, 5 logos, 5 videos — trim before reuse."}

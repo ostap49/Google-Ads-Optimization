@@ -183,6 +183,79 @@ def test_create_pmax_with_images_and_feed(fake, tmp_path):
                                                      "asset_group": {**ag, "marketing_images": [_png(tmp_path / "b.png", 1000, 1000)]}})
 
 
+def _lg_nodes(ops):
+    return [m.asset_group_listing_group_filter_operation.create for m in ops if _which(m) == "asset_group_listing_group_filter_operation"]
+
+
+PMAX_TEXT_AG = {"name": "AG1", "final_url": "https://soliy.com.ua", "business_name": "Солій",
+                "headlines": ["Швейні машини", "Промислові машини", "Доставка по Україні"],
+                "long_headlines": ["Промислові швейні машини з доставкою по Україні"],
+                "descriptions": ["Офіційна гарантія.", "Промислове швейне обладнання від дилера з сервісом."]}
+
+
+@pytest.mark.parametrize("mode,listed,rest", [("include", "UNIT_INCLUDED", "UNIT_EXCLUDED"),
+                                              ("exclude", "UNIT_EXCLUDED", "UNIT_INCLUDED")])
+def test_create_pmax_listing_filter_by_custom_label(fake, mode, listed, rest):
+    fake.route(r"campaign.name = ", [])
+    values = ["Hero"] if mode == "include" else ["hero", "villain"]
+    p = engine.propose("create_pmax_campaign", CID, {"name": f"PMax | {mode}", "daily_budget": 900, "merchant_center_id": "129844218",
+                                                     "listing_filter": {"dimension": "custom_label_0", mode: values},
+                                                     "asset_group": PMAX_TEXT_AG})
+    assert p["status"] == "validated", p
+    assert p["diff"][0]["after"]["listing_group"].endswith("custom_label_0 in [" + ", ".join(v.lower() for v in values) + "]")
+    nodes = _lg_nodes(_ops(fake))
+    root = nodes[0]
+    assert root.type_.name == "SUBDIVISION" and root.resource_name.endswith("~-1") and not root.parent_listing_group_filter
+    ag_rn = root.asset_group
+    assert root.resource_name == f"customers/{CID}/assetGroupListingGroupFilters/{ag_rn.rsplit('/', 1)[1]}~-1"
+    leaves = nodes[1:]
+    assert len(leaves) == len(values) + 1
+    for leaf, v in zip(leaves, values):
+        assert leaf.type_.name == listed and leaf.parent_listing_group_filter == root.resource_name
+        assert leaf.case_value.product_custom_attribute.index.name == "INDEX0"
+        assert leaf.case_value.product_custom_attribute.value == v.lower()
+    other = leaves[-1]
+    assert other.type_.name == rest and other.case_value.product_custom_attribute.index.name == "INDEX0"
+    assert other.case_value.product_custom_attribute.value == ""
+    kinds = [_which(m) for m in _ops(fake)]
+    assert kinds.index("asset_group_operation") < kinds.index("asset_group_listing_group_filter_operation")
+
+
+def test_create_pmax_listing_filter_validation(fake):
+    fake.route(r"campaign.name = ", [])
+    base = {"name": "X", "daily_budget": 100, "merchant_center_id": "1", "asset_group": PMAX_TEXT_AG}
+    for lf, msg in [({"dimension": "brand", "include": ["a"]}, "dimension"),
+                    ({"dimension": "custom_label_0"}, "exactly one"),
+                    ({"dimension": "custom_label_0", "include": ["a"], "exclude": ["b"]}, "exactly one"),
+                    ({"dimension": "custom_label_0", "include": ["a", "A"]}, "duplicate")]:
+        with pytest.raises(ValueError, match=msg):
+            engine.propose("create_pmax_campaign", CID, {**base, "listing_filter": lf})
+    with pytest.raises(ValueError, match="merchant_center_id"):
+        engine.propose("create_pmax_campaign", CID, {**base, "merchant_center_id": None,
+                                                     "listing_filter": {"dimension": "custom_label_0", "include": ["hero"]}})
+
+
+def test_create_pmax_reuses_existing_assets(fake):
+    fake.route(r"campaign.name = ", [])
+    existing = [{"asset": "111", "field_type": "headline"}, {"asset": f"customers/{CID}/assets/222", "field_type": "MARKETING_IMAGE"},
+                {"asset": "333", "field_type": "SQUARE_MARKETING_IMAGE"}, {"asset": "444", "field_type": "LOGO"},
+                {"asset": "555", "field_type": "BUSINESS_NAME"}]
+    ag = {**PMAX_TEXT_AG, "headlines": PMAX_TEXT_AG["headlines"][:2], "business_name": None, "existing_assets": existing}
+    p = engine.propose("create_pmax_campaign", CID, {"name": "PMax | reuse", "daily_budget": 500, "asset_group": ag})
+    assert p["status"] == "validated", p
+    links = [m.asset_group_asset_operation.create for m in _ops(fake) if _which(m) == "asset_group_asset_operation"]
+    linked = {(l.asset, l.field_type.name) for l in links}
+    assert (f"customers/{CID}/assets/111", "HEADLINE") in linked and (f"customers/{CID}/assets/444", "LOGO") in linked
+    created_text = [m.asset_operation.create.text_asset.text for m in _ops(fake) if _which(m) == "asset_operation"]
+    assert "Солій" not in created_text  # business name reused, not re-created
+    with pytest.raises(ValueError, match="does not belong"):
+        engine.propose("create_pmax_campaign", CID, {"name": "Y", "daily_budget": 100, "asset_group": {
+            **ag, "existing_assets": existing + [{"asset": "customers/999/assets/1", "field_type": "LOGO"}]}})
+    with pytest.raises(ValueError, match="field_type"):
+        engine.propose("create_pmax_campaign", CID, {"name": "Z", "daily_budget": 100, "asset_group": {
+            **ag, "existing_assets": [{"asset": "1", "field_type": "CALLOUT"}]}})
+
+
 def test_create_demand_gen(fake, tmp_path):
     fake.route(r"campaign.name = ", [])
     ad = {"headlines": ["Нова колекція"], "descriptions": ["Дивани для дому."], "business_name": "Stryi",
